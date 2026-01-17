@@ -54,11 +54,15 @@ export const editImageWithGemini = async (
   const lightingFinal = isNightRequested ? "STRICTLY OVERRIDE LIGHTING: Cinematic night/evening lighting." : currentSeason.lighting;
 
   // Prompt analizi - Poz/hareket istekleri mi yoksa kıyafet/scene değişikliği mi?
-  const isPoseOnlyRequest = /kameraya bak|bak|look|gül|smile|gülümseme|dön|turn|sağa bak|sola bak|yukarı bak|aşağı bak|pose|pozi|pozisyon/i.test(masterPrompt) 
+  const hasPrompt = masterPrompt && masterPrompt.trim().length > 0;
+  const isPoseOnlyRequest = hasPrompt && /kameraya bak|bak|look|gül|smile|gülümseme|dön|turn|sağa bak|sola bak|yukarı bak|aşağı bak|pose|pozi|pozisyon/i.test(masterPrompt) 
     && !/kıyafet|outfit|clothing|elbise|gömlek|pantolon|tişört|çanta|ayakkabı|shoes|bag|dress|shirt|pants/i.test(masterPrompt);
   
   const isClothingRequest = /kıyafet|outfit|clothing|elbise|gömlek|pantolon|tişört|çanta|ayakkabı|shoes|bag|dress|shirt|pants|formal|casual|spor|sport/i.test(masterPrompt);
   const isSceneRequest = /plaj|beach|gym|salon|ofis|office|kulüp|club|restoran|cafe|ev|home|bahçe|garden|park|ortam|environment|scene/i.test(masterPrompt);
+  
+  // Prompt yoksa veya sadece mevsim seçilmişse -> kıyafeti değiştir (mevsim atmosferine uygun)
+  const shouldChangeClothingForSeason = !hasPrompt || (!isPoseOnlyRequest && !isClothingRequest && !isSceneRequest);
 
   const fullPrompt = `
     TASK: Generate a high-end photo of the person in the Identity References.
@@ -80,6 +84,12 @@ export const editImageWithGemini = async (
     - KEEP THE EXACT SAME CLOTHING AND ACCESSORIES from the reference images.
     - DO NOT change outfit, accessories, or clothing items.
     - ONLY modify pose, facial expression, or camera direction as requested: "${masterPrompt}".
+    ` : shouldChangeClothingForSeason ? `
+    - CHANGE the clothing and accessories to match the season and atmosphere: ${currentSeason.vibe}.
+    - Outfit should be appropriate for the ${season === 'kış' ? 'winter' : season === 'yaz' ? 'summer' : season === 'sonbahar' ? 'autumn' : 'spring'} season.
+    - DO NOT copy clothing from Identity References. Create NEW seasonal-appropriate clothing.
+    - You MAY change the hair STYLE to fit the season, but keep the SAME color.
+    ${hasPrompt ? `- Consider the user's request: "${masterPrompt}".` : ''}
     ` : isClothingRequest || isSceneRequest ? `
     - You MAY change the clothing and accessories to match the scene: "${masterPrompt}".
     - Outfit should be appropriate for the scene description.

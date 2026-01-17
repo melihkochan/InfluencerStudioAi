@@ -62,6 +62,7 @@ const App: React.FC = () => {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
 
+
   // İlk yüklemede Supabase'den verileri çek
   useEffect(() => {
     const loadData = async () => {
@@ -1322,7 +1323,7 @@ const App: React.FC = () => {
                         );
                       })()}
                       {!state.selectedFolderId && (
-                        <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{state.archivedImages.length + state.archivedVideos.length} DOSYA</span>
+                    <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{state.archivedImages.length + state.archivedVideos.length} DOSYA</span>
                       )}
                     </div>
                   </div>
@@ -2227,8 +2228,8 @@ const App: React.FC = () => {
                   {/* Active Rendering Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
                     {/* Empty State - Profesyonel ve minimal */}
-                  {((state.activeTab === 'photo' && state.history.filter(h => h.characterId === state.activeCharacterId).length === 0) || 
-                    (state.activeTab === 'video' && state.videoHistory.filter(h => h.characterId === state.activeCharacterId).length === 0)) && !state.isProcessing && (
+                  {((state.activeTab === 'photo' && state.history.length === 0) ||
+                    (state.activeTab === 'video' && state.videoHistory.length === 0)) && !state.isProcessing && (
                       <div className="col-span-full">
                         <div className="relative flex items-center justify-center min-h-[70vh] py-20 px-12">
                           {/* Dış çizgiler - Alanı belirten border */}
@@ -2271,7 +2272,7 @@ const App: React.FC = () => {
                     )}
 
 
-                    {state.activeTab === 'photo' && state.history.filter(h => h.characterId === state.activeCharacterId).map(img => (
+                    {state.activeTab === 'photo' && state.history.map(img => (
                       <div key={img.id} className="group bg-slate-900 rounded-[3.5rem] overflow-hidden border border-white/5 relative shadow-2xl transition-all hover:scale-[1.02]">
                          <div className="aspect-[9/16] cursor-zoom-in" onClick={() => setSelectedMedia({url: img.url, type: 'photo'})}>
                             <img src={img.url} className="w-full h-full object-cover" />
@@ -2337,6 +2338,7 @@ const App: React.FC = () => {
            </div>
         </section>
       </main>
+
 
       
       <style>{`
