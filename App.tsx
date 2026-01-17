@@ -305,7 +305,7 @@ const App: React.FC = () => {
         reject(new Error('İstek zaman aşımına uğradı. Lütfen tekrar deneyin.'));
       }, 120000); // 2 dakika timeout
     });
-
+    
     try {
       let result;
       if (currentTab === 'photo') {
@@ -671,7 +671,7 @@ const App: React.FC = () => {
               onChange={(e) => setNewCharName(e.target.value)}
                     placeholder="Örn: Maya Winter, John Doe..."
                     className="w-full bg-slate-950/50 border-2 border-white/10 rounded-2xl p-4 text-sm outline-none focus:border-indigo-500 focus:bg-slate-950 transition-all text-white placeholder:text-slate-700"
-                  />
+            />
                 </div>
                 
                 <div className="flex gap-3 pt-2">
@@ -700,7 +700,6 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="flex-shrink-0 bg-[#020617] border-b border-white/5 px-8 py-4 flex items-center justify-between z-50">
         <div className="flex items-center gap-4">
-          <div className="p-3 bg-indigo-600 rounded-2xl shadow-xl shadow-indigo-600/20"><MagicIcon /></div>
           <div>
             <h1 className="text-2xl font-black tracking-tighter text-white uppercase leading-none">KOCHAN STUDIO</h1>
             <p className="text-[10px] font-black text-indigo-400 tracking-[0.4em] uppercase mt-1">CLOUD PRODUCTION V15</p>
@@ -768,7 +767,7 @@ const App: React.FC = () => {
                     key={char.id} 
                     onClick={() => setState(p => ({...p, activeCharacterId: char.id}))}
                       className={`flex-shrink-0 w-16 h-16 rounded-2xl border-2 transition-all overflow-hidden relative group ${state.activeCharacterId === char.id ? 'border-indigo-500 scale-105 shadow-xl shadow-indigo-500/30' : 'border-white/10 opacity-60 grayscale hover:opacity-100 hover:border-white/20'}`}
-                    >
+                  >
                       {char.images[0] ? (
                         <img src={char.images[0]} className="w-full h-full object-cover" alt={char.name} />
                       ) : (
@@ -1914,23 +1913,41 @@ const App: React.FC = () => {
                </div>
              ) : (
                <div className="space-y-10">
-                      {/* Empty State for Photo/Video */}
+                  {/* Active Rendering Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
+                    {/* Empty State - Profesyonel ve minimal */}
                   {((state.activeTab === 'photo' && state.history.filter(h => h.characterId === state.activeCharacterId).length === 0) || 
                     (state.activeTab === 'video' && state.videoHistory.filter(h => h.characterId === state.activeCharacterId).length === 0)) && !state.isProcessing && (
-                    <div className="h-[60vh] flex items-center justify-center animate-in zoom-in duration-700">
-                       <div className="max-w-3xl text-center space-y-8 bg-slate-900/10 p-20 rounded-[4rem] border border-white/5 backdrop-blur-2xl relative group overflow-hidden shadow-2xl">
-                          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[400px] bg-indigo-600/5 blur-[120px] rounded-full pointer-events-none"></div>
-                          <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[2.5rem] mx-auto flex items-center justify-center shadow-2xl transform rotate-12 animate-float"><MagicIcon /></div>
-                          <div className="space-y-4">
-                             <h2 className="text-6xl font-black text-white uppercase tracking-tighter leading-none">STÜDYO HAZIR</h2>
-                             <p className="text-slate-400 text-lg font-medium opacity-60 max-w-lg mx-auto leading-relaxed">Pikselleri canlandırmak için karakteri seç ve bir sahne hayal et!</p>
+                      <div className="col-span-full">
+                        <div className="relative flex items-center justify-center min-h-[70vh] py-20 px-12">
+                          {/* Dış çizgiler - Alanı belirten border */}
+                          <div className="absolute inset-0 rounded-3xl border-2 border-dashed border-white/10 hover:border-white/20 transition-all">
+                            <div className="absolute top-0 left-0 w-full h-full rounded-3xl border border-indigo-500/20 opacity-50"></div>
+                          </div>
+                          
+                          {/* İçerik */}
+                          <div className="relative text-center space-y-6 max-w-lg z-10">
+                            {/* Text */}
+                            <div className="space-y-2">
+                              <h3 className="text-2xl font-black text-white uppercase tracking-tight">
+                                {state.activeTab === 'photo' ? 'Görselleriniz Burada Gözükecek' : 'Videolarınız Burada Gözükecek'}
+                              </h3>
+                              <p className="text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
+                                Karakteri seçin ve prompt yazarak {state.activeTab === 'photo' ? 'ilk görselinizi' : 'ilk videonuzu'} oluşturun
+                              </p>
+                            </div>
+                            
+                            {/* Subtle divider */}
+                            <div className="flex items-center justify-center gap-4 pt-4">
+                              <div className="h-px w-16 bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                              <div className="w-1.5 h-1.5 rounded-full bg-indigo-500/40"></div>
+                              <div className="h-px w-16 bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                            </div>
                           </div>
                        </div>
                     </div>
                   )}
 
-                  {/* Active Rendering Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
                     {state.isProcessing && state.processingType === state.activeTab && (
                        <div className="aspect-[9/16] bg-slate-900/60 rounded-[3.5rem] border border-indigo-500/20 flex flex-col items-center justify-center animate-pulse relative overflow-hidden shadow-2xl">
                           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent animate-shimmer"></div>
