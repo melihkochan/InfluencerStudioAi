@@ -1,0 +1,7 @@
+{
+  "name": "Influencer Studio AI",
+  "description": "Upload your custom influencer character and transform them into any scene or style using advanced AI image editing.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
