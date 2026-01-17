@@ -54,7 +54,9 @@ const App: React.FC = () => {
   const [newCharName, setNewCharName] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<{url: string, type: 'photo' | 'video'} | null>(null);
   const [uploadFeedback, setUploadFeedback] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
   const charInputRef = useRef<HTMLInputElement>(null);
+  const albumCharInputRef = useRef<HTMLInputElement>(null);
   const styleInputRef = useRef<HTMLInputElement>(null);
   const quickInputRef = useRef<HTMLInputElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -222,6 +224,7 @@ const App: React.FC = () => {
     // Eğer gelecekte fallback gerekirse burayı tekrar aktif edebilirsiniz
     return () => {};
   }, [state]);
+
 
   const activeChar = state.characters.find(c => c.id === state.activeCharacterId);
   
@@ -802,6 +805,16 @@ const App: React.FC = () => {
                     }} className="text-red-500/30 hover:text-red-500"><DeleteIcon /></button>
                   </div>
                   
+                  {/* Loading state */}
+                  {isUploadingImages && (
+                    <div className="p-4 rounded-xl bg-indigo-500/20 border border-indigo-500/30 text-center mb-2 animate-in fade-in duration-300">
+                      <div className="flex items-center justify-center gap-3">
+                        <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                        <span className="text-[10px] font-black uppercase text-indigo-400">Görseller işleniyor...</span>
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* Upload feedback */}
                   {uploadFeedback && (
                     <div className={`p-3 rounded-xl text-[10px] font-black uppercase text-center mb-2 animate-in fade-in duration-300 ${
@@ -860,68 +873,129 @@ const App: React.FC = () => {
                   </div>
                   <input type="file" ref={charInputRef} className="hidden" multiple accept="image/*" onChange={async (e) => {
                     const files = Array.from(e.target.files || []) as File[];
-                    if (!state.activeCharacterId || files.length === 0) {
+                    
+                    if (!state.activeCharacterId) {
+                      setState(prev => ({ ...prev, error: 'Lütfen önce bir karakter seçin.' }));
+                      e.target.value = '';
+                      setTimeout(() => setState(prev => ({ ...prev, error: null })), 3000);
+                      return;
+                    }
+                    
+                    if (files.length === 0) {
                       e.target.value = '';
                       return;
                     }
                     
-                    // Optimistic update - önce state'i güncelle
-                    const newImages: string[] = [];
-                    const readers: Promise<void>[] = [];
+                    // Mevcut karakteri bul
+                    const currentChar = state.characters.find(c => c.id === state.activeCharacterId);
+                    if (!currentChar) {
+                      setState(prev => ({ ...prev, error: 'Karakter bulunamadı.' }));
+                      e.target.value = '';
+                      setTimeout(() => setState(prev => ({ ...prev, error: null })), 3000);
+                      return;
+                    }
                     
-                    // Dosyaları paralel oku
-                    files.forEach((file: File) => {
+                    // Loading state'i başlat
+                    setIsUploadingImages(true);
+                    setUploadFeedback(null);
+                    
+                    // Görselleri optimize et ve oku
+                    const newImages: string[] = [];
+                    
+                    for (const file of files) {
+                      try {
+                        // Görseli optimize et (maksimum 800px genişlik, JPEG kalitesi 0.8)
+                        const optimizedBase64 = await new Promise<string>((resolve, reject) => {
+                          const img = new Image();
+                          img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const maxWidth = 800;
+                            const maxHeight = 800;
+                            let width = img.width;
+                            let height = img.height;
+                            
+                            // Boyutlandır
+                            if (width > maxWidth || height > maxHeight) {
+                              const ratio = Math.min(maxWidth / width, maxHeight / height);
+                              width = width * ratio;
+                              height = height * ratio;
+                            }
+                            
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            if (!ctx) {
+                              reject(new Error('Canvas context alınamadı'));
+                              return;
+                            }
+                            
+                            ctx.drawImage(img, 0, 0, width, height);
+                            
+                            // JPEG olarak kaydet (daha küçük boyut)
+                            const quality = 0.8;
+                            const base64 = canvas.toDataURL('image/jpeg', quality);
+                            resolve(base64);
+                          };
+                          img.onerror = () => {
+                            URL.revokeObjectURL(blobUrl);
+                            reject(new Error('Görsel yüklenemedi'));
+                          };
+                          const blobUrl = URL.createObjectURL(file);
+                          img.src = blobUrl;
+                        });
+                        
+                        newImages.push(optimizedBase64);
+                      } catch (error) {
+                        // Hata durumunda orijinal dosyayı kullan
                       const reader = new FileReader();
-                      const promise = new Promise<void>((resolve) => {
+                        await new Promise<void>((resolve) => {
                       reader.onloadend = () => {
-                          if (reader.result) {
-                            newImages.push(reader.result as string);
-                          }
-                          resolve();
-                        };
-                        reader.onerror = () => {
-                          // Dosya okuma hatası
-                          resolve();
-                      };
+                            if (reader.result) {
+                              newImages.push(reader.result as string);
+                            }
+                            resolve();
+                          };
+                          reader.onerror = () => resolve();
                       reader.readAsDataURL(file);
                     });
-                      readers.push(promise);
-                    });
-                    
-                    // Tüm dosyaların okunmasını bekle
-                    await Promise.all(readers);
+                      }
+                    }
                     
                     if (newImages.length === 0) {
                       setState(prev => ({ ...prev, error: 'Görseller yüklenemedi.' }));
                       e.target.value = '';
+                      setTimeout(() => setState(prev => ({ ...prev, error: null })), 3000);
                       return;
                     }
-
-                    // Mevcut karakteri bul
-                    setState(prev => {
-                      const currentChar = prev.characters.find(c => c.id === prev.activeCharacterId);
-                      if (!currentChar) return prev;
                       
-                      // Optimistic update - hemen görünür yap
-                      const updatedImages = [...currentChar.images, ...newImages].slice(-8);
-                      const updatedChars = prev.characters.map(c => 
-                        c.id === prev.activeCharacterId ? { ...c, images: updatedImages } : c
-                      );
+                    // Güncellenmiş görselleri hazırla (maksimum 8)
+                    const updatedImages = [...currentChar.images, ...newImages].slice(-8);
+                    
+                    // Önce Supabase'e kaydet, sonra state'i güncelle
+                    try {
+                      await supabaseService.updateCharacter(state.activeCharacterId, { images: updatedImages });
                       
-                      // Supabase'e kaydet (arka planda)
-                      supabaseService.updateCharacter(prev.activeCharacterId, { images: updatedImages })
-                        .then(() => {
-                          setUploadFeedback({ message: `${newImages.length} görsel eklendi!`, type: 'success' });
-                          setTimeout(() => setUploadFeedback(null), 3000);
-                        })
-                        .catch(error => {
-                          console.error('Supabase kaydetme hatası:', error);
-                          setUploadFeedback({ message: 'Görseller kaydedilemedi, ancak yüklendi.', type: 'error' });
-                          setTimeout(() => setUploadFeedback(null), 3000);
-                        });
+                      // Başarılı olursa state'i güncelle
+                      setState(prev => {
+                        const updatedChars = prev.characters.map(c => 
+                          c.id === state.activeCharacterId ? { ...c, images: updatedImages } : c
+                        );
+                        return { ...prev, characters: updatedChars, error: null };
+                      });
                       
-                      return { ...prev, characters: updatedChars, error: null };
-                    });
+                      setUploadFeedback({ message: `${newImages.length} görsel eklendi!`, type: 'success' });
+                      setTimeout(() => setUploadFeedback(null), 3000);
+                    } catch (error: any) {
+                      const errorMsg = error.message || 'Görseller kaydedilemedi.';
+                      setState(prev => ({ ...prev, error: errorMsg }));
+                      setUploadFeedback({ message: errorMsg, type: 'error' });
+                      setTimeout(() => {
+                        setUploadFeedback(null);
+                        setState(prev => ({ ...prev, error: null }));
+                      }, 3000);
+                    } finally {
+                      setIsUploadingImages(false);
+                    }
                     
                     // Input'u temizle
                     e.target.value = '';
@@ -1225,7 +1299,31 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-end border-b border-white/5 pb-6">
                     <h2 className="text-4xl font-black text-white uppercase tracking-tighter">STUDIO ARCHIVES</h2>
                     <div className="flex items-center gap-4">
-                    <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{state.archivedImages.length + state.archivedVideos.length} DOSYA</span>
+                      {state.selectedFolderId && state.selectedFolderId !== 'quick' && (() => {
+                        const char = state.characters.find(c => c.id === state.selectedFolderId);
+                        if (!char) return null;
+                        const charImgs = state.archivedImages.filter(h => h.characterId === char.id);
+                        const charVids = state.archivedVideos.filter(vh => vh.characterId === char.id);
+                        const dnaCount = char.images.length;
+                        const generatedCount = charImgs.length + charVids.length;
+                        return (
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{generatedCount} OLUŞTURULAN GÖRSELLER</span>
+                            <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{dnaCount} DNA GÖRSELLERİ</span>
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">TOPLAM: {generatedCount + dnaCount}</span>
+                          </div>
+                        );
+                      })()}
+                      {state.selectedFolderId === 'quick' && (() => {
+                        const quickImgs = state.archivedImages.filter(h => h.characterId === '00000000-0000-0000-0000-000000000000');
+                        const quickVids = state.archivedVideos.filter(vh => vh.characterId === '00000000-0000-0000-0000-000000000000');
+                        return (
+                          <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{quickImgs.length + quickVids.length} OLUŞTURULAN GÖRSELLER</span>
+                        );
+                      })()}
+                      {!state.selectedFolderId && (
+                        <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{state.archivedImages.length + state.archivedVideos.length} DOSYA</span>
+                      )}
                     </div>
                   </div>
                   
@@ -1410,11 +1508,30 @@ const App: React.FC = () => {
                   {state.selectedFolderId === 'quick' && (() => {
                     const quickImgs = state.archivedImages.filter(h => h.characterId === '00000000-0000-0000-0000-000000000000');
                     const quickVids = state.archivedVideos.filter(vh => vh.characterId === '00000000-0000-0000-0000-000000000000');
+                    const allItems = [...quickImgs, ...quickVids].sort((a,b) => b.timestamp - a.timestamp);
+                    
+                    // Tarih bazlı gruplandırma
+                    const groupedByDate = allItems.reduce((acc: any, item: any) => {
+                      const date = new Date(item.timestamp);
+                      const dateKey = date.toLocaleDateString('tr-TR', { year: 'numeric', month: 'long', day: 'numeric' });
+                      if (!acc[dateKey]) {
+                        acc[dateKey] = [];
+                      }
+                      acc[dateKey].push(item);
+                      return acc;
+                    }, {});
                     
                     return (
-                      <div className="space-y-6 animate-in fade-in duration-300">
+                      <div className="space-y-8 animate-in fade-in duration-300">
+                        {Object.entries(groupedByDate).map(([dateKey, items]: [string, any[]]) => (
+                          <div key={dateKey} className="space-y-4">
+                            <div className="flex items-center gap-3 px-2">
+                              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
+                              <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider">{dateKey}</h3>
+                              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
+                         </div>
                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6 px-1">
-                            {[...quickImgs, ...quickVids].sort((a,b) => b.timestamp - a.timestamp).map((item: any) => {
+                              {items.map((item: any) => {
                               const isSelected = state.selectedItems.includes(item.id);
                               return (
                                <div 
@@ -1440,7 +1557,8 @@ const App: React.FC = () => {
                                  )}
                                  {item.url.startsWith('blob:') || item.url.includes('.mp4') ? <video src={item.url} autoPlay loop muted className="w-full h-full object-cover" /> : <img src={item.url} className="w-full h-full object-cover" />}
                                  <div className={`absolute inset-0 bg-black/90 transition-all flex flex-col justify-end p-6 gap-3 backdrop-blur-sm ${state.isSelectionMode ? 'opacity-50' : 'opacity-0 group-hover:opacity-100'}`}>
-                                    <div className="text-[10px] font-black text-white truncate mb-2 uppercase tracking-tighter border-b border-white/10 pb-2">{item.name}</div>
+                                    <div className="text-[10px] font-black text-white truncate mb-1 uppercase tracking-tighter border-b border-white/10 pb-1">{item.name}</div>
+                                    <div className="text-[9px] text-slate-400 mb-2">{new Date(item.timestamp).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                                     <div className="grid grid-cols-2 gap-2 mt-2">
                                        <button onClick={() => setSelectedMedia({url: item.url, type: (item.url.startsWith('blob:') ? 'video' : 'photo')})} className="py-3.5 bg-white text-black rounded-2xl text-[9px] font-black uppercase hover:bg-slate-200 transition-all">GÖR</button>
                                        <a href={item.url} download={`${item.name}.${item.url.includes('blob') ? 'mp4' : 'png'}`} onClick={e => e.stopPropagation()} className="py-3.5 bg-indigo-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-indigo-500 transition-all">
@@ -1547,7 +1665,9 @@ const App: React.FC = () => {
                                </div>
                               );
                             })}
-                         </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     );
                   })()}
@@ -1559,25 +1679,213 @@ const App: React.FC = () => {
                     
                     const charImgs = state.archivedImages.filter(h => h.characterId === char.id);
                     const charVids = state.archivedVideos.filter(vh => vh.characterId === char.id);
+                    const allItems = [...charImgs, ...charVids].sort((a,b) => b.timestamp - a.timestamp);
+                    
+                    // Tarih bazlı gruplandırma
+                    const groupedByDate = allItems.reduce((acc: any, item: any) => {
+                      const date = new Date(item.timestamp);
+                      const dateKey = date.toLocaleDateString('tr-TR', { year: 'numeric', month: 'long', day: 'numeric' });
+                      if (!acc[dateKey]) {
+                        acc[dateKey] = [];
+                      }
+                      acc[dateKey].push(item);
+                      return acc;
+                    }, {});
                     
                     return (
-                      <div className="space-y-6 animate-in fade-in duration-300">
+                      <div className="space-y-8 animate-in fade-in duration-300">
+                         {/* Loading state */}
+                         {isUploadingImages && (
+                           <div className="p-4 rounded-xl bg-indigo-500/20 border border-indigo-500/30 text-center mb-2 animate-in fade-in duration-300">
+                             <div className="flex items-center justify-center gap-3">
+                               <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                               <span className="text-[10px] font-black uppercase text-indigo-400">Görseller işleniyor...</span>
+                             </div>
+                           </div>
+                         )}
+                         
+                         {/* Upload feedback */}
+                         {uploadFeedback && (
+                           <div className={`p-3 rounded-xl text-[10px] font-black uppercase text-center mb-2 animate-in fade-in duration-300 ${
+                             uploadFeedback.type === 'success' 
+                               ? 'bg-green-500/20 border border-green-500/30 text-green-400' 
+                               : 'bg-red-500/20 border border-red-500/30 text-red-400'
+                           }`}>
+                             {uploadFeedback.message}
+                           </div>
+                         )}
+                         
                          {/* DNA Görselleri Özeti */}
                          <div className="space-y-2">
-                           <div className="text-xs font-black text-slate-400 uppercase tracking-wider px-2">DNA Görselleri</div>
+                           <div className="flex items-center justify-between px-2 mb-2">
+                             <div className="text-xs font-black text-slate-400 uppercase tracking-wider">DNA Görselleri</div>
+                             <input 
+                               type="file" 
+                               ref={albumCharInputRef} 
+                               className="hidden" 
+                               multiple 
+                               accept="image/*" 
+                               onChange={async (e) => {
+                                 const files = Array.from(e.target.files || []) as File[];
+                                 if (!char.id || files.length === 0) {
+                                   e.target.value = '';
+                                   return;
+                                 }
+                                 
+                                 // Loading state'i başlat
+                                 setIsUploadingImages(true);
+                                 setUploadFeedback(null);
+                                 
+                                 // Görselleri optimize et ve oku
+                                 const newImages: string[] = [];
+                                 
+                                 for (const file of files) {
+                                   try {
+                                     // Görseli optimize et (maksimum 800px genişlik, JPEG kalitesi 0.8)
+                                     const optimizedBase64 = await new Promise<string>((resolve, reject) => {
+                                       const img = new Image();
+                                       const blobUrl = URL.createObjectURL(file);
+                                       img.onload = () => {
+                                         const canvas = document.createElement('canvas');
+                                         const maxWidth = 800;
+                                         const maxHeight = 800;
+                                         let width = img.width;
+                                         let height = img.height;
+                                         
+                                         // Boyutlandır
+                                         if (width > maxWidth || height > maxHeight) {
+                                           const ratio = Math.min(maxWidth / width, maxHeight / height);
+                                           width = width * ratio;
+                                           height = height * ratio;
+                                         }
+                                         
+                                         canvas.width = width;
+                                         canvas.height = height;
+                                         const ctx = canvas.getContext('2d');
+                                         if (!ctx) {
+                                           URL.revokeObjectURL(blobUrl);
+                                           reject(new Error('Canvas context alınamadı'));
+                                           return;
+                                         }
+                                         
+                                         ctx.drawImage(img, 0, 0, width, height);
+                                         
+                                         // JPEG olarak kaydet (daha küçük boyut)
+                                         const quality = 0.8;
+                                         const base64 = canvas.toDataURL('image/jpeg', quality);
+                                         URL.revokeObjectURL(blobUrl);
+                                         resolve(base64);
+                                       };
+                                       img.onerror = () => {
+                                         URL.revokeObjectURL(blobUrl);
+                                         reject(new Error('Görsel yüklenemedi'));
+                                       };
+                                       img.src = blobUrl;
+                                     });
+                                     
+                                     newImages.push(optimizedBase64);
+                                   } catch (error) {
+                                     // Hata durumunda orijinal dosyayı kullan
+                                     const reader = new FileReader();
+                                     await new Promise<void>((resolve) => {
+                                       reader.onloadend = () => {
+                                         if (reader.result) {
+                                           newImages.push(reader.result as string);
+                                         }
+                                         resolve();
+                                       };
+                                       reader.onerror = () => resolve();
+                                       reader.readAsDataURL(file);
+                                     });
+                                   }
+                                 }
+                                 
+                                 if (newImages.length === 0) {
+                                   setState(prev => ({ ...prev, error: 'Görseller yüklenemedi.' }));
+                                   setIsUploadingImages(false);
+                                   e.target.value = '';
+                                   return;
+                                 }
+                                 
+                                 const updatedImages = [...char.images, ...newImages].slice(-8);
+                                 
+                                 try {
+                                   await supabaseService.updateCharacter(char.id, { images: updatedImages });
+                                   setState(prev => {
+                                     const updatedChars = prev.characters.map(c => 
+                                       c.id === char.id ? { ...c, images: updatedImages } : c
+                                     );
+                                     return { ...prev, characters: updatedChars, error: null };
+                                   });
+                                   setUploadFeedback({ message: `${newImages.length} görsel eklendi!`, type: 'success' });
+                                   setTimeout(() => setUploadFeedback(null), 3000);
+                                 } catch (error: any) {
+                                   setState(prev => ({ ...prev, error: error.message || 'Görseller kaydedilemedi.' }));
+                                   setUploadFeedback({ message: 'Görseller kaydedilemedi.', type: 'error' });
+                                   setTimeout(() => {
+                                     setUploadFeedback(null);
+                                     setState(prev => ({ ...prev, error: null }));
+                                   }, 3000);
+                                 } finally {
+                                   setIsUploadingImages(false);
+                                 }
+                                 
+                                 e.target.value = '';
+                               }}
+                             />
+                             <button
+                               onClick={() => albumCharInputRef.current?.click()}
+                               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-1.5"
+                             >
+                               <PlusIcon /> EKLE
+                             </button>
+                           </div>
                            <div className="grid grid-cols-6 sm:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 px-1">
                              {char.images.map((img, idx) => (
-                               <div key={idx} className="aspect-square rounded-xl overflow-hidden border border-white/10">
+                               <div key={idx} className="aspect-square rounded-xl overflow-hidden border border-white/10 group relative">
                                  <img src={img} className="w-full h-full object-cover" />
+                                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                   <button
+                                     onClick={async () => {
+                                       try {
+                                         const updatedImages = char.images.filter((_, i) => i !== idx);
+                                         await supabaseService.updateCharacter(char.id, { images: updatedImages });
+                                         setState(prev => {
+                                           const updatedChars = prev.characters.map(c => 
+                                             c.id === char.id ? { ...c, images: updatedImages } : c
+                                           );
+                                           return { ...prev, characters: updatedChars, error: null };
+                                         });
+                                         setUploadFeedback({ message: 'Görsel silindi!', type: 'success' });
+                                         setTimeout(() => setUploadFeedback(null), 3000);
+                                       } catch (error: any) {
+                                         setState(prev => ({ ...prev, error: error.message || 'Görsel silinemedi.' }));
+                                         setTimeout(() => setState(prev => ({ ...prev, error: null })), 3000);
+                                       }
+                                     }}
+                                     className="p-2 bg-red-600 hover:bg-red-500 rounded-lg transition-all"
+                                   >
+                                     <DeleteIcon />
+                                   </button>
+                                 </div>
                                </div>
                              ))}
                            </div>
                          </div>
-                         {/* Oluşturulan Görseller */}
-                         <div className="space-y-2">
-                           <div className="text-xs font-black text-slate-400 uppercase tracking-wider px-2">Oluşturulan Görseller</div>
-                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6 px-1">
-                            {[...charImgs, ...charVids].sort((a,b) => b.timestamp - a.timestamp).map((item: any) => {
+                         {/* Oluşturulan Görseller - Tarih Bazlı */}
+                         <div className="space-y-8">
+                           {Object.entries(groupedByDate).map(([dateKey, items]: [string, any[]]) => (
+                             <div key={dateKey} className="space-y-4">
+                               <div className="flex items-center gap-3 px-2">
+                                 <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
+                                 <div className="flex items-center gap-2">
+                                   <h3 className="text-sm font-black text-slate-400 uppercase tracking-wider">{dateKey}</h3>
+                                   <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">({items.length} görsel)</span>
+                                 </div>
+                                 <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
+                               </div>
+                               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6 px-1">
+                                 {items.map((item: any) => {
                               const isSelected = state.selectedItems.includes(item.id);
                               return (
                                <div 
@@ -1603,7 +1911,8 @@ const App: React.FC = () => {
                                  )}
                                  {item.url.startsWith('blob:') || item.url.includes('.mp4') ? <video src={item.url} autoPlay loop muted className="w-full h-full object-cover" /> : <img src={item.url} className="w-full h-full object-cover" />}
                                  <div className={`absolute inset-0 bg-black/90 transition-all flex flex-col justify-end p-6 gap-3 backdrop-blur-sm ${state.isSelectionMode ? 'opacity-50' : 'opacity-0 group-hover:opacity-100'}`}>
-                                    <div className="text-[10px] font-black text-white truncate mb-2 uppercase tracking-tighter border-b border-white/10 pb-2">{item.name}</div>
+                                    <div className="text-[10px] font-black text-white truncate mb-1 uppercase tracking-tighter border-b border-white/10 pb-1">{item.name}</div>
+                                    <div className="text-[9px] text-slate-400 mb-2">{new Date(item.timestamp).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                                     <div className="grid grid-cols-2 gap-2 mt-2">
                                        <button onClick={() => setSelectedMedia({url: item.url, type: (item.url.startsWith('blob:') ? 'video' : 'photo')})} className="py-3.5 bg-white text-black rounded-2xl text-[9px] font-black uppercase hover:bg-slate-200 transition-all">GÖR</button>
                                        <a href={item.url} download={`${item.name}.${item.url.includes('blob') ? 'mp4' : 'png'}`} onClick={e => e.stopPropagation()} className="py-3.5 bg-indigo-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-indigo-500 transition-all">
@@ -1720,7 +2029,9 @@ const App: React.FC = () => {
                               </div>
                               );
                             })}
-                           </div>
+                                 </div>
+                              </div>
+                            ))}
                          </div>
                       </div>
                     );
@@ -2026,6 +2337,7 @@ const App: React.FC = () => {
            </div>
         </section>
       </main>
+
       
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }

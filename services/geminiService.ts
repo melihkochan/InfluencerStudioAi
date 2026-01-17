@@ -53,20 +53,48 @@ export const editImageWithGemini = async (
   const isNightRequested = /akşam|gece|night|evening|dark|sunset|moonlight|parti|party/i.test(masterPrompt);
   const lightingFinal = isNightRequested ? "STRICTLY OVERRIDE LIGHTING: Cinematic night/evening lighting." : currentSeason.lighting;
 
+  // Prompt analizi - Poz/hareket istekleri mi yoksa kıyafet/scene değişikliği mi?
+  const isPoseOnlyRequest = /kameraya bak|bak|look|gül|smile|gülümseme|dön|turn|sağa bak|sola bak|yukarı bak|aşağı bak|pose|pozi|pozisyon/i.test(masterPrompt) 
+    && !/kıyafet|outfit|clothing|elbise|gömlek|pantolon|tişört|çanta|ayakkabı|shoes|bag|dress|shirt|pants/i.test(masterPrompt);
+  
+  const isClothingRequest = /kıyafet|outfit|clothing|elbise|gömlek|pantolon|tişört|çanta|ayakkabı|shoes|bag|dress|shirt|pants|formal|casual|spor|sport/i.test(masterPrompt);
+  const isSceneRequest = /plaj|beach|gym|salon|ofis|office|kulüp|club|restoran|cafe|ev|home|bahçe|garden|park|ortam|environment|scene/i.test(masterPrompt);
+
   const fullPrompt = `
     TASK: Generate a high-end photo of the person in the Identity References.
     
-    IDENTITY CORE (NON-NEGOTIABLE):
+    ════════════════════════════════════════════════════════════════
+    IDENTITY PRESERVATION (ABSOLUTE PRIORITY - NEVER VIOLATE):
+    ════════════════════════════════════════════════════════════════
+    
     - FACE: Exact facial features, eye shape, and bone structure from Identity References.
     - HAIR COLOR: STICK TO THE EXACT HAIR COLOR seen in Identity References. Do not change it.
     - SKIN TONE: Maintain the original skin tone.
+    - BODY TYPE: Preserve the EXACT body proportions and physique from Identity References.
     
-    SCENE ADAPTATION (STYLE & CLOTHING): 
-    - You MAY change the hair STYLE (e.g., messy, tied up, wavy) to fit the scene: "${masterPrompt}".
-    - You MUST change the CLOTHING and ACCESSORIES (earrings, glasses, jewelry) to be appropriate for the scene.
-    - Outfit should be professional high-fashion based on: "${masterPrompt}".
+    ════════════════════════════════════════════════════════════════
+    CLOTHING & ACCESSORIES POLICY:
+    ════════════════════════════════════════════════════════════════
     
+    ${isPoseOnlyRequest ? `
+    - KEEP THE EXACT SAME CLOTHING AND ACCESSORIES from the reference images.
+    - DO NOT change outfit, accessories, or clothing items.
+    - ONLY modify pose, facial expression, or camera direction as requested: "${masterPrompt}".
+    ` : isClothingRequest || isSceneRequest ? `
+    - You MAY change the clothing and accessories to match the scene: "${masterPrompt}".
+    - Outfit should be appropriate for the scene description.
+    - You MAY change the hair STYLE (e.g., messy, tied up, wavy) to fit the scene, but keep the SAME color.
+    ` : `
+    - PRESERVE the clothing and accessories from Identity References.
+    - Only adapt hair STYLE if explicitly requested in: "${masterPrompt}".
+    - Keep the same outfit unless the scene clearly requires different clothing.
+    `}
+    
+    ════════════════════════════════════════════════════════════════
     POSE & COMPOSITION:
+    ════════════════════════════════════════════════════════════════
+    
+    - Apply the requested pose/expression: "${masterPrompt}".
     - IF a Pose Reference is provided, FOLLOW that pose and camera framing PRECISELY.
     - Camera angle: ${camera.angle || "standard"}. 
     - Shot scale: ${camera.scale || "medium"}.
@@ -389,3 +417,5 @@ export const generateVideoWithVeo = async (
     name: generatedName.toUpperCase()
   };
 };
+
+

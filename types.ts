@@ -66,5 +66,6 @@ export interface AppState {
   selectedItems: string[]; // Selected item IDs (images/videos)
   isSelectionMode: boolean;
   
+  
   error: string | null;
 }
