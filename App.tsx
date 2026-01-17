@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { AppState, Character, GeneratedImage, GeneratedVideo } from './types';
-import { editImageWithGemini, generateVideoWithVeo } from './services/geminiService';
+import { editImageWithGemini, generateVideoWithVeo, generateQuickImage } from './services/geminiService';
 import { supabaseService } from './services/supabaseService';
 import { 
   UploadIcon, MagicIcon, DownloadIcon, DeleteIcon, 
@@ -19,26 +19,33 @@ const CAMERA_OPTIONS = {
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
-    characters: [],
-    activeCharacterId: null,
-    styleReferenceImage: null,
-    videoReferenceImage: null,
+      characters: [],
+      activeCharacterId: null,
+      styleReferenceImage: null,
+      videoReferenceImage: null,
     photoPrompt: '',
     videoPrompt: '',
-    history: [],
-    videoHistory: [],
-    archivedImages: [],
-    archivedVideos: [],
-    isProcessing: false,
-    processingType: null,
-    activeTab: 'photo',
-    activeSeason: 'default',
-    aspectRatio: '9:16',
-    cameraAngle: null,
-    shotScale: null,
-    lensType: null,
-    showCameraConfig: false,
-    error: null,
+      history: [],
+      videoHistory: [],
+      archivedImages: [],
+      archivedVideos: [],
+      isProcessing: false,
+      processingType: null,
+      activeTab: 'photo',
+      activeSeason: 'default',
+    quickPrompt: '',
+    quickReferenceImage: null,
+    quickHistory: [],
+      aspectRatio: '9:16',
+      cameraAngle: null,
+      shotScale: null,
+      lensType: null,
+      showCameraConfig: false,
+    albumFolders: [],
+    selectedFolderId: null,
+    selectedItems: [],
+    isSelectionMode: false,
+      error: null,
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -49,6 +56,7 @@ const App: React.FC = () => {
   const [uploadFeedback, setUploadFeedback] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   const charInputRef = useRef<HTMLInputElement>(null);
   const styleInputRef = useRef<HTMLInputElement>(null);
+  const quickInputRef = useRef<HTMLInputElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
 
@@ -61,7 +69,7 @@ const App: React.FC = () => {
         // Supabase'den karakterleri yükle
         const characters = await supabaseService.getCharacters();
         
-        // Supabase'den görselleri yükle
+        // Supabase'den görselleri yükle (quick görseller dahil değil - onlar geçici)
         const images = await supabaseService.getImages(undefined, false);
         const archivedImages = await supabaseService.getImages(undefined, true);
         
@@ -69,24 +77,23 @@ const App: React.FC = () => {
         const videos = await supabaseService.getVideos(undefined, false);
         const archivedVideos = await supabaseService.getVideos(undefined, true);
 
-        console.log('Supabase yükleme sonuçları:', {
-          characters: characters.length,
-          images: images.length,
-          archivedImages: archivedImages.length,
-          videos: videos.length,
-          archivedVideos: archivedVideos.length
-        });
+        // Hızlı görseller veritabanına kaydedilmez - sadece geçici state'te tutulur
+        // Quick görselleri filtrele (sadece normal görselleri al)
+        const regularImages = images.filter(img => img.characterId !== 'quick');
+
+        // Supabase yükleme tamamlandı
 
         setState(prev => ({
           ...prev,
           characters,
-          history: images,
+          history: regularImages,
+          quickHistory: [], // Hızlı görseller geçici - sayfa yenilendiğinde kaybolur
           archivedImages,
           videoHistory: videos,
           archivedVideos
         }));
       } catch (error) {
-        console.error('Veri yükleme hatası:', error);
+        // Veri yükleme hatası
         // Fallback: localStorage'dan yükle
         try {
           const saved = localStorage.getItem('kochan_studio_v15');
@@ -95,7 +102,7 @@ const App: React.FC = () => {
             setState(prev => ({ ...prev, ...savedData }));
           }
         } catch (e) {
-          console.error('localStorage yükleme hatası:', e);
+          // localStorage yükleme hatası
         }
       } finally {
         setIsLoading(false);
@@ -114,7 +121,7 @@ const App: React.FC = () => {
       const dataStr = JSON.stringify(data);
       // localStorage limit kontrolü (yaklaşık 5MB)
       if (dataStr.length > 4 * 1024 * 1024) {
-        console.warn('localStorage limiti yaklaşıyor, eski arşivleri temizliyorum...');
+        // localStorage limiti yaklaşıyor
         // Arşivlenmiş dosyaları temizle
         const cleanedData = {
           ...data,
@@ -152,7 +159,7 @@ const App: React.FC = () => {
       }
     } catch (e: any) {
       if (e.name === 'QuotaExceededError' || e.code === 22) {
-        console.error('localStorage kotası aşıldı. Eski veriler temizleniyor...');
+        // localStorage kotası aşıldı
         try {
           // Arşivlenmiş dosyaları temizle ve tekrar dene
           const cleanedData = {
@@ -189,13 +196,13 @@ const App: React.FC = () => {
               }));
             }
           } catch (e3) {
-            console.error('localStorage temizleme başarısız:', e3);
+            // localStorage temizleme başarısız
             // Bu hata artık görünmemeli çünkü localStorage kullanmıyoruz
             // Supabase kullanıldığı için bu durum oluşmamalı
           }
         }
       } else {
-        console.error('localStorage kaydetme hatası:', e);
+        // localStorage kaydetme hatası
         if (!skipStateUpdate) {
           setState(prev => ({
             ...prev,
@@ -233,10 +240,10 @@ const App: React.FC = () => {
         localStorage.removeItem('kochan_studio_v15');
         window.location.reload();
       } catch (error) {
-        console.error('Reset hatası:', error);
+        // Reset hatası
         // Hata olsa bile localStorage'ı temizle ve yenile
-        localStorage.removeItem('kochan_studio_v15');
-        window.location.reload();
+      localStorage.removeItem('kochan_studio_v15');
+      window.location.reload();
       }
     }
   };
@@ -272,7 +279,7 @@ const App: React.FC = () => {
       }));
       return;
     }
-
+    
     const currentTab = state.activeTab === 'album' ? 'photo' : state.activeTab as 'photo' | 'video';
     
     // Video için karakter DNA kontrolü (referans görsel opsiyonel)
@@ -313,11 +320,7 @@ const App: React.FC = () => {
 
         const photoPrompt = state.photoPrompt || '';
         
-        console.log('Görsel üretimi başlatılıyor...', { 
-          characterImages: activeChar.images.length, 
-          hasStyleRef: !!state.styleReferenceImage,
-          prompt: photoPrompt 
-        });
+        // Görsel üretimi başlatılıyor
 
         // Timeout ile birlikte API çağrısı
         result = await Promise.race([
@@ -325,7 +328,7 @@ const App: React.FC = () => {
           timeoutPromise
         ]) as { url: string; name: string };
 
-        console.log('Görsel üretildi:', result.name);
+        // Görsel üretildi
 
         const newImg: GeneratedImage = { 
           id: Date.now().toString(), 
@@ -340,7 +343,7 @@ const App: React.FC = () => {
         try {
           await supabaseService.saveImage(newImg, false);
         } catch (dbError) {
-          console.error('Supabase kaydetme hatası:', dbError);
+          // Supabase kaydetme hatası
         }
         
         setState(p => ({ 
@@ -355,17 +358,14 @@ const App: React.FC = () => {
       } else {
         const videoPrompt = state.videoPrompt || '';
         
-        console.log('Video üretimi başlatılıyor...', {
-          hasVideoRef: !!state.videoReferenceImage,
-          prompt: videoPrompt
-        });
+        // Video üretimi başlatılıyor
         
         result = await Promise.race([
           generateVideoWithVeo(activeChar.images, state.videoReferenceImage, videoPrompt, state.activeSeason, state.aspectRatio),
           timeoutPromise
         ]) as { url: string; name: string };
 
-        console.log('Video üretildi:', result.name);
+        // Video üretildi
 
         const newVid: GeneratedVideo = { 
           id: Date.now().toString(), 
@@ -380,7 +380,7 @@ const App: React.FC = () => {
         try {
           await supabaseService.saveVideo(newVid, false);
         } catch (dbError) {
-          console.error('Supabase kaydetme hatası:', dbError);
+          // Supabase kaydetme hatası
         }
         
         setState(p => ({ 
@@ -394,7 +394,7 @@ const App: React.FC = () => {
         }));
       }
     } catch (err: any) {
-      console.error('Üretim hatası:', err);
+      // Üretim hatası
       
       let errorMessage = 'Bilinmeyen bir hata oluştu.';
       
@@ -430,37 +430,167 @@ const App: React.FC = () => {
     }
   };
 
+  const handleQuickGenerate = async () => {
+    if (!state.quickPrompt.trim()) {
+      setState(p => ({ ...p, error: "Lütfen bir prompt girin." }));
+      return;
+    }
+
+    if (!process.env.API_KEY) {
+      setState(p => ({ 
+        ...p, 
+        error: "API key bulunamadı! Lütfen .env.local dosyasında GEMINI_API_KEY ayarlandığından emin olun." 
+      }));
+      return;
+    }
+
+    // Prompt'u sakla (chat'te gösterilecek)
+    const promptToUse = state.quickPrompt;
+    const referenceImageToUse = state.quickReferenceImage;
+    
+    // Geçici mesaj ekle (chat'te prompt gösterilecek)
+    const tempMessage: GeneratedImage = {
+      id: `temp-${Date.now()}`,
+      url: '',
+      name: '',
+      prompt: promptToUse,
+      timestamp: Date.now(),
+      characterId: 'quick'
+    };
+    
+    // Textarea'yı hemen temizle, geçici mesajı ekle
+    setState(p => ({ 
+      ...p, 
+      isProcessing: true, 
+      processingType: 'photo',
+      quickPrompt: '', // Textarea'yı temizle
+      quickHistory: [tempMessage, ...p.quickHistory], // Geçici mesaj ekle
+      error: null 
+    }));
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('İstek zaman aşımına uğradı. Lütfen tekrar deneyin.'));
+      }, 120000);
+    });
+
+    try {
+      const result = await Promise.race([
+        generateQuickImage(referenceImageToUse, promptToUse),
+        timeoutPromise
+      ]) as { url: string; name: string };
+
+      const newImg: GeneratedImage = { 
+        id: Date.now().toString(), 
+        url: result.url, 
+        name: result.name,
+        prompt: promptToUse, // Prompt'u görsele kaydet
+        timestamp: Date.now(), 
+        characterId: 'quick'
+      };
+
+      // Geçici mesajı gerçek mesajla değiştir
+      setState(p => {
+        // Geçici mesajı kaldır, gerçek mesajı ekle
+        const filteredHistory = p.quickHistory.filter(h => h.id !== tempMessage.id);
+        return {
+          ...p, 
+          quickHistory: [newImg, ...filteredHistory], // Gerçek mesajı en başa ekle
+          quickReferenceImage: null, // Referans görseli temizle
+          isProcessing: false,
+          processingType: null,
+          error: 'Görsel oluşturuldu ✓' 
+        };
+      });
+      setTimeout(() => setState(p => ({...p, error: null})), 2000);
+    } catch (err: any) {
+      let errorMessage = 'Bilinmeyen bir hata oluştu.';
+      if (err.message) {
+        errorMessage = err.message;
+      }
+
+      if (errorMessage.includes('IMAGE_SAFETY') || errorMessage.includes('SAFETY')) {
+        errorMessage = 'İçerik güvenlik kontrolünden geçemedi. Lütfen farklı bir prompt deneyin.';
+      }
+
+      setState(p => ({ 
+        ...p, 
+        isProcessing: false,
+        processingType: null,
+        error: errorMessage 
+      }));
+    }
+  };
+
   const archiveItem = async (id: string, type: 'photo' | 'video') => {
     try {
       if (type === 'photo') {
-        await supabaseService.archiveImage(id);
         setState(prev => {
-          const item = prev.history.find(h => h.id === id);
-          if (!item) return prev;
-          return {
-            ...prev,
-            history: prev.history.filter(h => h.id !== id),
-            archivedImages: [...prev.archivedImages, item]
-          };
+          // Önce normal history'de ara
+          let item = prev.history.find(h => h.id === id);
+          if (item) {
+            // Normal görsel - direkt arşivle
+            supabaseService.archiveImage(id).then(() => {
+              setState(p => ({ ...p, error: 'Albüme gönderildi ✓' }));
+              setTimeout(() => setState(p => ({...p, error: null})), 2000);
+            }).catch(() => {
+              setState(p => ({ ...p, error: 'Albüme gönderilemedi.' }));
+              setTimeout(() => setState(p => ({...p, error: null})), 3000);
+            });
+        return {
+          ...prev,
+          history: prev.history.filter(h => h.id !== id),
+          archivedImages: [...prev.archivedImages, item]
+        };
+          }
+          // Sonra quick history'de ara
+          item = prev.quickHistory.find(h => h.id === id);
+          if (item) {
+            // Quick görsel - önce veritabanına kaydet (archived olarak)
+            const itemToArchive: GeneratedImage = {
+              ...item,
+              characterId: '00000000-0000-0000-0000-000000000000' // Quick görseller için özel UUID
+            };
+            
+            // Veritabanına kaydet (async işlem)
+            (async () => {
+              try {
+                await supabaseService.saveImage(itemToArchive, true);
+                setState(p => ({ ...p, error: 'Albüme gönderildi ✓' }));
+                setTimeout(() => setState(p => ({...p, error: null})), 2000);
+              } catch (err) {
+                // Hata durumunda kullanıcıya bildir
+                setState(p => ({ ...p, error: 'Albüme kaydedilemedi. Lütfen tekrar deneyin.' }));
+                setTimeout(() => setState(p => ({...p, error: null})), 3000);
+              }
+            })();
+            
+            return {
+              ...prev,
+              quickHistory: prev.quickHistory.filter(h => h.id !== id),
+              archivedImages: [...prev.archivedImages, itemToArchive]
+            };
+          }
+          return prev;
         });
       } else {
         await supabaseService.archiveVideo(id);
         setState(prev => {
-          const item = prev.videoHistory.find(v => v.id === id);
+        const item = prev.videoHistory.find(v => v.id === id);
           if (!item) {
-            console.warn('Video bulunamadı:', id);
+            // Video bulunamadı
             return prev;
           }
-          console.log('Video arşivlendi:', item.name);
-          return {
-            ...prev,
-            videoHistory: prev.videoHistory.filter(v => v.id !== id),
-            archivedVideos: [...prev.archivedVideos, item]
-          };
-        });
+          // Video arşivlendi
+        return {
+          ...prev,
+          videoHistory: prev.videoHistory.filter(v => v.id !== id),
+          archivedVideos: [...prev.archivedVideos, item]
+        };
+    });
       }
     } catch (error) {
-      console.error('Arşivleme hatası:', error);
+      // Arşivleme hatası
       setState(prev => ({ ...prev, error: 'Arşivleme başarısız oldu.' }));
     }
   };
@@ -507,14 +637,14 @@ const App: React.FC = () => {
             try {
               const newChar = await supabaseService.createCharacter(newCharName.trim(), []);
               if (newChar) {
-                setState(p => ({ ...p, characters: [...p.characters, newChar], activeCharacterId: newChar.id }));
-                setNewCharName('');
-                setIsCreatingChar(false);
+            setState(p => ({ ...p, characters: [...p.characters, newChar], activeCharacterId: newChar.id }));
+            setNewCharName('');
+            setIsCreatingChar(false);
               } else {
                 setState(p => ({ ...p, error: 'Karakter oluşturulamadı. Supabase bağlantısını kontrol edin.' }));
               }
             } catch (error: any) {
-              console.error('Karakter oluşturma hatası:', error);
+              // Karakter oluşturma hatası
               setState(p => ({ ...p, error: error.message || 'Karakter oluşturulamadı.' }));
             }
           }} onClick={(e) => e.stopPropagation()} className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/10 p-8 rounded-[3rem] max-w-md w-full space-y-6 shadow-2xl scale-in-center relative overflow-hidden">
@@ -534,11 +664,11 @@ const App: React.FC = () => {
               <div className="space-y-4">
                 <div>
                   <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-2">KARAKTER ADI</label>
-                  <input 
-                    autoFocus
-                    type="text" 
-                    value={newCharName}
-                    onChange={(e) => setNewCharName(e.target.value)}
+            <input 
+              autoFocus
+              type="text" 
+              value={newCharName}
+              onChange={(e) => setNewCharName(e.target.value)}
                     placeholder="Örn: Maya Winter, John Doe..."
                     className="w-full bg-slate-950/50 border-2 border-white/10 rounded-2xl p-4 text-sm outline-none focus:border-indigo-500 focus:bg-slate-950 transition-all text-white placeholder:text-slate-700"
                   />
@@ -578,22 +708,32 @@ const App: React.FC = () => {
         </div>
 
         <nav className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-white/5 gap-2">
-          {['photo', 'video', 'album'].map(tab => (
+          {['photo', 'video', 'quick', 'album'].map(tab => (
             <button 
               key={tab}
-              onClick={() => setState(prev => ({...prev, activeTab: tab as any, error: null}))} 
+              onClick={() => {
+                const wasQuick = state.activeTab === 'quick';
+                const isQuick = tab === 'quick';
+                setState(prev => ({
+                  ...prev, 
+                  activeTab: tab as any, 
+                  error: null,
+                  // Quick'ten çıkarken chat geçmişini temizle
+                  ...(wasQuick && !isQuick ? { quickHistory: [], quickPrompt: '', quickReferenceImage: null } : {})
+                }));
+              }} 
               className={`px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2.5 ${state.activeTab === tab ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-600/30' : 'text-slate-500 hover:text-slate-300'}`}
             >
               {tab === 'photo' && <CameraIcon />}
               {tab === 'video' && <VideoIcon />}
+              {tab === 'quick' && <MagicIcon />}
               {tab === 'album' && <LayoutGridIcon />}
-              {tab.toUpperCase()}
+              {tab === 'quick' ? 'HIZLI' : tab.toUpperCase()}
             </button>
           ))}
         </nav>
 
         <div className="flex items-center gap-6">
-           <button onClick={resetApp} className="p-2 text-slate-700 hover:text-red-500 transition-colors"><DeleteIcon /></button>
            <div className="flex items-center gap-3 bg-slate-900/60 px-4 py-2 rounded-xl border border-white/5">
              <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest tracking-[0.2em]">CONNECTED</span>
@@ -605,7 +745,7 @@ const App: React.FC = () => {
       <main className="flex-grow flex px-8 py-6 gap-8 overflow-hidden">
         
         {/* Sidebar */}
-        <aside className={`w-[340px] flex-shrink-0 overflow-y-auto pr-3 space-y-6 custom-scrollbar ${state.activeTab === 'album' ? 'hidden' : ''}`}>
+        <aside className={`w-[340px] flex-shrink-0 overflow-y-auto pr-3 space-y-6 custom-scrollbar ${state.activeTab === 'album' || state.activeTab === 'quick' ? 'hidden' : ''}`}>
           
           <section className="bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/5 space-y-5 shadow-2xl">
              <div className="flex justify-between items-center px-1">
@@ -624,9 +764,9 @@ const App: React.FC = () => {
                   </div>
                 ) : (
                   state.characters.map(char => (
-                    <button 
-                      key={char.id} 
-                      onClick={() => setState(p => ({...p, activeCharacterId: char.id}))}
+                  <button 
+                    key={char.id} 
+                    onClick={() => setState(p => ({...p, activeCharacterId: char.id}))}
                       className={`flex-shrink-0 w-16 h-16 rounded-2xl border-2 transition-all overflow-hidden relative group ${state.activeCharacterId === char.id ? 'border-indigo-500 scale-105 shadow-xl shadow-indigo-500/30' : 'border-white/10 opacity-60 grayscale hover:opacity-100 hover:border-white/20'}`}
                     >
                       {char.images[0] ? (
@@ -641,7 +781,7 @@ const App: React.FC = () => {
                       {state.activeCharacterId === char.id && (
                         <div className="absolute inset-0 bg-indigo-500/20 border-2 border-indigo-500 rounded-2xl"></div>
                       )}
-                    </button>
+                  </button>
                   ))
                 )}
              </div>
@@ -656,7 +796,7 @@ const App: React.FC = () => {
                           await supabaseService.deleteCharacter(activeChar.id);
                           setState(p => ({...p, characters: p.characters.filter(c => c.id !== activeChar.id), activeCharacterId: null}));
                         } catch (error) {
-                          console.error('Karakter silme hatası:', error);
+                          // Karakter silme hatası
                           setState(p => ({ ...p, error: 'Karakter silinemedi.' }));
                         }
                       }
@@ -686,7 +826,7 @@ const App: React.FC = () => {
                        </div>
                      ) : (
                        <>
-                         {activeChar.images.map((img, i) => (
+                     {activeChar.images.map((img, i) => (
                            <div key={`${activeChar.id}-img-${i}-${img.substring(0, 30)}`} className="aspect-square rounded-xl overflow-hidden relative group border border-white/5 animate-in fade-in duration-300 hover:border-indigo-500/30 transition-all">
                               <img src={img} className="w-full h-full object-cover" alt={`${activeChar.name} DNA ${i + 1}`} />
                               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
@@ -695,24 +835,24 @@ const App: React.FC = () => {
                                   const updatedImages = activeChar.images.filter((_, idx) => idx !== i);
                                   await supabaseService.updateCharacter(activeChar.id, { images: updatedImages });
                                   setState(p => ({
-                                    ...p, 
+                            ...p, 
                                     characters: p.characters.map(c => c.id === activeChar.id ? {...c, images: updatedImages} : c)
                                   }));
                                 } catch (error) {
-                                  console.error('Görsel silme hatası:', error);
+                                  // Görsel silme hatası
                                   setState(p => ({ ...p, error: 'Görsel silinemedi.' }));
                                 }
                               }} className="absolute inset-0 bg-red-600/90 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all"><DeleteIcon /></button>
                               <div className="absolute top-2 left-2 w-5 h-5 rounded-full bg-indigo-500/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                 <span className="text-[8px] font-black text-white">{i + 1}</span>
                               </div>
-                           </div>
-                         ))}
+                       </div>
+                     ))}
                          {activeChar.images.length < 8 && (
                            <button onClick={() => charInputRef.current?.click()} className="aspect-square bg-slate-950/50 border-2 border-dashed border-indigo-500/30 rounded-xl flex flex-col items-center justify-center text-slate-600 hover:text-indigo-400 hover:border-indigo-500/50 hover:bg-indigo-500/10 transition-all group">
                              <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
                                <PlusIcon />
-                             </div>
+                  </div>
                              <span className="text-[8px] font-black uppercase">Ekle</span>
                            </button>
                          )}
@@ -734,18 +874,18 @@ const App: React.FC = () => {
                     files.forEach((file: File) => {
                       const reader = new FileReader();
                       const promise = new Promise<void>((resolve) => {
-                        reader.onloadend = () => {
+                      reader.onloadend = () => {
                           if (reader.result) {
                             newImages.push(reader.result as string);
                           }
                           resolve();
                         };
                         reader.onerror = () => {
-                          console.error('Dosya okuma hatası:', file.name);
+                          // Dosya okuma hatası
                           resolve();
-                        };
-                        reader.readAsDataURL(file);
-                      });
+                      };
+                      reader.readAsDataURL(file);
+                    });
                       readers.push(promise);
                     });
                     
@@ -842,9 +982,102 @@ const App: React.FC = () => {
             </>
           )}
 
+          {state.activeTab === 'quick' && (
+            <>
+              <section className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 p-6 rounded-[2.5rem] border border-indigo-500/20 space-y-4 shadow-xl">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-indigo-500/20 rounded-xl"><MagicIcon /></div>
+                  <div>
+                    <h3 className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">HIZLI OLUŞTUR</h3>
+                    <p className="text-[9px] text-slate-500 mt-0.5">Karakter olmadan hızlı görsel üret</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="bg-slate-900/40 p-5 rounded-[2.5rem] border border-white/5 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-[11px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                    <UploadIcon /> REFERANS GÖRSEL
+                  </h3>
+                  <span className="text-[8px] font-black text-slate-600 uppercase">OPSİYONEL</span>
+                </div>
+                {!state.quickReferenceImage ? (
+                  <button 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (quickInputRef.current) {
+                        quickInputRef.current.click();
+                      }
+                    }} 
+                    className="w-full h-20 border-2 border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-700 hover:border-indigo-500/30 hover:bg-indigo-600/5 transition-all group"
+                  >
+                    <div className="group-hover:scale-110 transition-transform"><UploadIcon /></div>
+                    <span className="text-[9px] font-black mt-1 uppercase tracking-widest">GÖRSEL YÜKLE</span>
+                  </button>
+                ) : (
+                  <div className="relative h-24 rounded-2xl overflow-hidden border border-indigo-500/30 group shadow-lg">
+                    <img src={state.quickReferenceImage} className="w-full h-full object-cover" />
+                    <button onClick={() => {
+                      setState(p => ({...p, quickReferenceImage: null}));
+                    }} className="absolute inset-0 bg-red-600/90 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-black text-[10px] uppercase transition-all">SİL</button>
+                  </div>
+                )}
+                <input 
+                  type="file" 
+                  ref={quickInputRef} 
+                  className="hidden" 
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) {
+                      e.target.value = '';
+                      return;
+                    }
+
+                    if (!file.type.startsWith('image/')) {
+                      // Sadece görsel dosyaları yüklenebilir
+                      setState(p => ({ ...p, error: 'Sadece görsel dosyaları yüklenebilir' }));
+                      e.target.value = '';
+                      return;
+                    }
+
+                    const reader = new FileReader();
+                    
+                    reader.onloadend = () => {
+                      try {
+                        const dataUrl = reader.result as string;
+                        if (!dataUrl) {
+                          // Görsel okunamadı
+                          return;
+                        }
+
+                        setState(p => ({ ...p, quickReferenceImage: dataUrl, error: null }));
+                        // Hızlı oluşturma referans görseli yüklendi
+                      } catch (err) {
+                        // Görsel yükleme hatası
+                        setState(p => ({ ...p, error: 'Görsel yüklenirken bir hata oluştu' }));
+                      }
+                      e.target.value = '';
+                    };
+
+                    reader.onerror = () => {
+                      // FileReader hatası
+                      setState(p => ({ ...p, error: 'Görsel okunamadı' }));
+                      e.target.value = '';
+                    };
+
+                    reader.readAsDataURL(file);
+                  }} 
+                />
+              </section>
+            </>
+          )}
+
           {/* Re-designed Bottom Section */}
           <div className="space-y-6 pt-2">
             {/* Reference Image Section */}
+            {state.activeTab !== 'quick' && (
             <section className="bg-slate-900/40 p-5 rounded-[2.5rem] border border-white/5 space-y-4 shadow-xl">
                <div className="flex items-center justify-between px-1">
                   <h3 className="text-[11px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
@@ -857,11 +1090,11 @@ const App: React.FC = () => {
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      console.log('Reference yükleme butonu tıklandı, activeTab:', state.activeTab);
+                      // Reference yükleme butonu tıklandı
                       if (styleInputRef.current) {
                         styleInputRef.current.click();
                       } else {
-                        console.error('styleInputRef bulunamadı');
+                        // styleInputRef bulunamadı
                       }
                     }} 
                     className="w-full h-20 border-2 border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-700 hover:border-indigo-500/30 hover:bg-indigo-600/5 transition-all group"
@@ -887,7 +1120,7 @@ const App: React.FC = () => {
                   className="hidden" 
                   accept="image/*"
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
+                  const file = e.target.files?.[0];
                     if (!file) {
                       e.target.value = '';
                       return;
@@ -895,7 +1128,7 @@ const App: React.FC = () => {
 
                     // Dosya tipi kontrolü
                     if (!file.type.startsWith('image/')) {
-                      console.error('Sadece görsel dosyaları yüklenebilir');
+                      // Sadece görsel dosyaları yüklenebilir
                       setState(p => ({ ...p, error: 'Sadece görsel dosyaları yüklenebilir' }));
                       e.target.value = '';
                       return;
@@ -905,9 +1138,9 @@ const App: React.FC = () => {
                     
                     reader.onloadend = () => {
                       try {
-                        const dataUrl = reader.result as string;
+                      const dataUrl = reader.result as string;
                         if (!dataUrl) {
-                          console.error('Görsel okunamadı');
+                          // Görsel okunamadı
                           return;
                         }
 
@@ -915,20 +1148,20 @@ const App: React.FC = () => {
                         const currentTab = state.activeTab;
                         if (currentTab === 'photo') {
                           setState(p => ({ ...p, styleReferenceImage: dataUrl, error: null }));
-                          console.log('Style reference görsel yüklendi (photo)');
+                          // Style reference görsel yüklendi
                         } else if (currentTab === 'video') {
                           setState(p => ({ ...p, videoReferenceImage: dataUrl, error: null }));
-                          console.log('Video reference görsel yüklendi');
+                          // Video reference görsel yüklendi
                         }
                       } catch (err) {
-                        console.error('Görsel yükleme hatası:', err);
+                        // Görsel yükleme hatası
                         setState(p => ({ ...p, error: 'Görsel yüklenirken bir hata oluştu' }));
-                      }
-                      e.target.value = '';
+                  }
+                  e.target.value = '';
                     };
 
                     reader.onerror = () => {
-                      console.error('FileReader hatası');
+                      // FileReader hatası
                       setState(p => ({ ...p, error: 'Görsel okunamadı' }));
                       e.target.value = '';
                     };
@@ -937,6 +1170,7 @@ const App: React.FC = () => {
                   }} 
                 />
             </section>
+            )}
 
             {/* Scene Prompt Section */}
             <section className="bg-slate-900/60 p-6 rounded-[2.5rem] border border-white/10 space-y-4 shadow-2xl relative overflow-hidden group">
@@ -947,26 +1181,30 @@ const App: React.FC = () => {
                </div>
                
                <textarea 
-                  value={state.activeTab === 'photo' ? state.photoPrompt : state.videoPrompt} 
+                  value={state.activeTab === 'quick' ? state.quickPrompt : (state.activeTab === 'photo' ? state.photoPrompt : state.videoPrompt)} 
                   onChange={(e) => {
-                    if (state.activeTab === 'photo') {
+                    if (state.activeTab === 'quick') {
+                      setState(p => ({...p, quickPrompt: e.target.value}));
+                    } else if (state.activeTab === 'photo') {
                       setState(p => ({...p, photoPrompt: e.target.value}));
                     } else {
                       setState(p => ({...p, videoPrompt: e.target.value}));
                     }
                   }} 
-                  placeholder={state.activeTab === 'photo' 
+                  placeholder={state.activeTab === 'quick'
+                    ? "Görseli tanımlayın (örn: modern ofis ortamı, güneşli plaj, şehir manzarası...)"
+                    : state.activeTab === 'photo' 
                     ? "Karakteri nereye koyalım? (örn: gece kulübü girişi, neon ışıklar, elinde içecek...)" 
                     : "Video için aksiyon tanımlayın (örn: dans ediyor, gülümsüyor, yürüyor...)"} 
                   className="w-full bg-slate-950/50 border border-white/5 rounded-2xl p-4 text-sm h-32 outline-none focus:border-indigo-500 focus:bg-slate-950 transition-all resize-none text-slate-200 placeholder:text-slate-700 shadow-inner custom-scrollbar" 
                />
 
                <button 
-                 onClick={handleGenerate} 
-                 disabled={state.isProcessing && state.processingType === state.activeTab} 
-                 className={`w-full py-5 rounded-[1.75rem] font-black text-[11px] tracking-[0.4em] uppercase transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-3 ${state.isProcessing && state.processingType === state.activeTab ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-indigo-500/40 hover:scale-[1.02]'}`}
+                 onClick={state.activeTab === 'quick' ? handleQuickGenerate : handleGenerate} 
+                 disabled={state.isProcessing && (state.activeTab === 'quick' ? state.processingType === 'photo' : state.processingType === state.activeTab)} 
+                 className={`w-full py-5 rounded-[1.75rem] font-black text-[11px] tracking-[0.4em] uppercase transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-3 ${state.isProcessing && (state.activeTab === 'quick' ? state.processingType === 'photo' : state.processingType === state.activeTab) ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-indigo-500/40 hover:scale-[1.02]'}`}
                >
-                  {state.isProcessing && state.processingType === state.activeTab ? (
+                  {state.isProcessing && (state.activeTab === 'quick' ? state.processingType === 'photo' : state.processingType === state.activeTab) ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
                       <span>İŞLENİYOR</span>
@@ -987,29 +1225,385 @@ const App: React.FC = () => {
                <div className="space-y-10 animate-in fade-in duration-500">
                   <div className="flex justify-between items-end border-b border-white/5 pb-6">
                     <h2 className="text-4xl font-black text-white uppercase tracking-tighter">STUDIO ARCHIVES</h2>
+                    <div className="flex items-center gap-4">
                     <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{state.archivedImages.length + state.archivedVideos.length} DOSYA</span>
+                    </div>
                   </div>
                   
-                  {state.characters.length === 0 && <div className="text-center py-20 text-slate-700 font-black text-xl uppercase tracking-widest">ARŞİV BOŞ</div>}
+                  {state.characters.length === 0 && state.archivedImages.filter(img => img.characterId === '00000000-0000-0000-0000-000000000000').length === 0 && !state.selectedFolderId && <div className="text-center py-20 text-slate-700 font-black text-xl uppercase tracking-widest">ARŞİV BOŞ</div>}
                   
+                  {/* Geri ve Seçim Butonları - Seçili klasör varsa göster */}
+                  {state.selectedFolderId && (
+                    <div className="mb-6 flex items-center justify-between">
+                      <button
+                        onClick={() => setState(p => ({...p, selectedFolderId: null, selectedItems: [], isSelectionMode: false}))}
+                        className="flex items-center gap-3 px-4 py-3 bg-slate-900/40 hover:bg-slate-900/60 rounded-2xl border border-white/10 transition-all group"
+                      >
+                        <span className="text-white/60 group-hover:text-white transform transition-transform group-hover:-translate-x-1">←</span>
+                        <span className="text-sm font-black text-white uppercase tracking-tight">GERİ</span>
+                      </button>
+                      
+                      <div className="flex items-center gap-3">
+                        {state.isSelectionMode && state.selectedItems.length > 0 && (
+                          <>
+                            <div className="text-sm font-black text-indigo-400 uppercase">
+                              {state.selectedItems.length} SEÇİLDİ
+                            </div>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  for (const id of state.selectedItems) {
+                                    const img = state.archivedImages.find(i => i.id === id);
+                                    const vid = state.archivedVideos.find(v => v.id === id);
+                                    if (img) await supabaseService.deleteImage(id);
+                                    if (vid) await supabaseService.deleteVideo(id);
+                                  }
+                                  setState(p => ({
+                                    ...p,
+                                    archivedImages: p.archivedImages.filter(i => !p.selectedItems.includes(i.id)),
+                                    archivedVideos: p.archivedVideos.filter(v => !p.selectedItems.includes(v.id)),
+                                    selectedItems: [],
+                                    error: 'Seçilen dosyalar silindi ✓'
+                                  }));
+                                  setTimeout(() => setState(p => ({...p, error: null})), 2000);
+                                } catch (error) {
+                                  setState(p => ({...p, error: 'Silme işlemi başarısız oldu.'}));
+                                }
+                              }}
+                              className="px-4 py-2 rounded-xl text-[11px] font-black uppercase bg-red-600 text-white hover:bg-red-500 transition-all"
+                            >
+                              SİL
+                            </button>
+                          </>
+                        )}
+                        <button
+                          onClick={() => setState(p => ({...p, isSelectionMode: !p.isSelectionMode, selectedItems: []}))}
+                          className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase transition-all ${
+                            state.isSelectionMode 
+                              ? 'bg-indigo-600 text-white' 
+                              : 'bg-slate-900 text-slate-400 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          {state.isSelectionMode ? 'SEÇİMİ İPTAL' : 'SEÇ'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Folders Grid - Klasörler yan yana görsel kartlar - Sadece seçili klasör yoksa göster */}
+                  {!state.selectedFolderId && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6 mb-10">
+                    {/* Quick görseller klasörü */}
+                    {(() => {
+                      const quickImgs = state.archivedImages.filter(h => h.characterId === '00000000-0000-0000-0000-000000000000');
+                      const quickVids = state.archivedVideos.filter(vh => vh.characterId === '00000000-0000-0000-0000-000000000000');
+                      if (quickImgs.length === 0 && quickVids.length === 0) return null;
+                      
+                      const isQuickSelected = state.selectedFolderId === 'quick';
+                      const recentItems = [...quickImgs, ...quickVids].sort((a,b) => b.timestamp - a.timestamp).slice(0, 4);
+                      
+                      return (
+                        <button
+                          key="quick"
+                          onClick={() => {
+                            setState(p => ({
+                              ...p,
+                              selectedFolderId: isQuickSelected ? null : 'quick'
+                            }));
+                          }}
+                          className={`relative aspect-[4/5] bg-slate-900/40 rounded-3xl border-2 overflow-hidden group transition-all hover:scale-105 shadow-2xl ${
+                            isQuickSelected 
+                              ? 'border-indigo-500 ring-2 ring-indigo-500/50' 
+                              : 'border-white/10 hover:border-white/30'
+                          }`}
+                        >
+                          {/* Arka plan - Oluşturulan görsellerden preview */}
+                          <div className="absolute inset-0 grid grid-cols-2 gap-1 p-2 opacity-30 group-hover:opacity-40 transition-opacity">
+                            {recentItems.slice(0, 4).map((item, idx) => (
+                              <div key={idx} className="relative rounded-xl overflow-hidden">
+                                {item.url.startsWith('blob:') || item.url.includes('.mp4') ? (
+                                  <video src={item.url} className="w-full h-full object-cover" muted />
+                                ) : (
+                                  <img src={item.url} className="w-full h-full object-cover" />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          
+                          {/* Gradient overlay */}
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent" />
+                          
+                          {/* İçerik */}
+                          <div className="relative h-full flex flex-col justify-end p-6 z-10">
+                            <div className="mb-4 flex items-center justify-center">
+                              <div className="w-20 h-20 rounded-full overflow-hidden border-3 border-purple-500/60 bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-xl">
+                                <MagicIcon />
+                              </div>
+                            </div>
+                            <h4 className="text-lg font-black text-white uppercase tracking-tight leading-none mb-1">HIZLI OLUŞTURULAN</h4>
+                            <span className="text-sm text-slate-300">{quickImgs.length + quickVids.length} dosya</span>
+                          </div>
+                        </button>
+                      );
+                    })()}
+                    
+                    {/* Karakter klasörleri */}
                   {state.characters.map(char => {
                     const charImgs = state.archivedImages.filter(h => h.characterId === char.id);
                     const charVids = state.archivedVideos.filter(vh => vh.characterId === char.id);
                     if (charImgs.length === 0 && charVids.length === 0) return null;
+                      
+                      const isCharSelected = state.selectedFolderId === char.id;
+                      const recentItems = [...charImgs, ...charVids].sort((a,b) => b.timestamp - a.timestamp).slice(0, 4);
+                      const profileImage = char.images[0] || '';
                     
                     return (
-                      <div key={char.id} className="space-y-6">
-                         <div className="flex items-center gap-4 bg-slate-900/30 p-4 rounded-3xl border border-white/5 shadow-lg">
-                            <div className="w-12 h-12 rounded-2xl overflow-hidden border border-indigo-500/40">
-                               <img src={char.images[0]} className="w-full h-full object-cover" />
+                        <button
+                          key={char.id}
+                          onClick={() => {
+                            setState(p => ({
+                              ...p,
+                              selectedFolderId: isCharSelected ? null : char.id
+                            }));
+                          }}
+                          className={`relative aspect-[4/5] bg-slate-900/40 rounded-3xl border-2 overflow-hidden group transition-all hover:scale-105 shadow-2xl ${
+                            isCharSelected 
+                              ? 'border-indigo-500 ring-2 ring-indigo-500/50' 
+                              : 'border-white/10 hover:border-white/30'
+                          }`}
+                        >
+                          {/* Arka plan - Oluşturulan görsellerden preview */}
+                          {recentItems.length > 0 && (
+                            <div className="absolute inset-0 grid grid-cols-2 gap-1 p-2 opacity-30 group-hover:opacity-40 transition-opacity">
+                              {recentItems.slice(0, 4).map((item, idx) => (
+                                <div key={idx} className="relative rounded-xl overflow-hidden">
+                                  {item.url.startsWith('blob:') || item.url.includes('.mp4') ? (
+                                    <video src={item.url} className="w-full h-full object-cover" muted />
+                                  ) : (
+                                    <img src={item.url} className="w-full h-full object-cover" />
+                                  )}
                             </div>
-                            <h4 className="text-lg font-black text-white uppercase tracking-tighter leading-none">{char.name} DNA</h4>
+                              ))}
                          </div>
+                          )}
+                          
+                          {/* Gradient overlay */}
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent" />
+                          
+                          {/* İçerik */}
+                          <div className="relative h-full flex flex-col justify-end p-6 z-10">
+                            {/* Profil Resmi - Büyük Yuvarlak */}
+                            <div className="mb-4 flex items-center justify-center">
+                              <div className="w-20 h-20 rounded-full overflow-hidden border-3 border-indigo-500/60 shadow-xl ring-4 ring-slate-900/50">
+                                <img src={profileImage} className="w-full h-full object-cover" />
+                              </div>
+                            </div>
+                            <h4 className="text-lg font-black text-white uppercase tracking-tight leading-none mb-1">{char.name} DNA</h4>
+                            <span className="text-sm text-slate-300">{charImgs.length + charVids.length} dosya</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  )}
+                  
+                  {/* Seçili Klasörün İçeriği - Sadece açık klasör gösterilir */}
+                  {state.selectedFolderId === 'quick' && (() => {
+                    const quickImgs = state.archivedImages.filter(h => h.characterId === '00000000-0000-0000-0000-000000000000');
+                    const quickVids = state.archivedVideos.filter(vh => vh.characterId === '00000000-0000-0000-0000-000000000000');
+                    
+                    return (
+                      <div className="space-y-6 animate-in fade-in duration-300">
                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6 px-1">
-                            {[...charImgs, ...charVids].sort((a,b) => b.timestamp - a.timestamp).map((item: any) => (
-                               <div key={item.id} className="aspect-[9/16] bg-slate-900 rounded-[2.5rem] overflow-hidden border border-white/5 group relative transition-all hover:scale-[1.05] shadow-2xl">
+                            {[...quickImgs, ...quickVids].sort((a,b) => b.timestamp - a.timestamp).map((item: any) => {
+                              const isSelected = state.selectedItems.includes(item.id);
+                              return (
+                               <div 
+                                 key={item.id} 
+                                 onClick={(e) => {
+                                   if (state.isSelectionMode) {
+                                     e.stopPropagation();
+                                     setState(p => ({
+                                       ...p,
+                                       selectedItems: isSelected
+                                         ? p.selectedItems.filter(id => id !== item.id)
+                                         : [...p.selectedItems, item.id]
+                                     }));
+                                   }
+                                 }}
+                                 className={`aspect-[9/16] bg-slate-900 rounded-[2.5rem] overflow-hidden border-2 transition-all shadow-2xl relative cursor-pointer ${isSelected ? 'border-indigo-500 scale-105 ring-2 ring-indigo-500/50' : 'border-white/5 group hover:scale-[1.05]'}`}
+                               >
+                                 {/* Selection Checkbox */}
+                                 {state.isSelectionMode && (
+                                   <div className={`absolute top-4 left-4 z-20 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-indigo-600 border-indigo-400' : 'bg-black/50 border-white/30'}`}>
+                                     {isSelected && <span className="text-white text-xs">✓</span>}
+                                   </div>
+                                 )}
                                  {item.url.startsWith('blob:') || item.url.includes('.mp4') ? <video src={item.url} autoPlay loop muted className="w-full h-full object-cover" /> : <img src={item.url} className="w-full h-full object-cover" />}
-                                 <div className="absolute inset-0 bg-black/90 opacity-0 group-hover:opacity-100 transition-all flex flex-col justify-end p-6 gap-3 backdrop-blur-sm">
+                                 <div className={`absolute inset-0 bg-black/90 transition-all flex flex-col justify-end p-6 gap-3 backdrop-blur-sm ${state.isSelectionMode ? 'opacity-50' : 'opacity-0 group-hover:opacity-100'}`}>
+                                    <div className="text-[10px] font-black text-white truncate mb-2 uppercase tracking-tighter border-b border-white/10 pb-2">{item.name}</div>
+                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                       <button onClick={() => setSelectedMedia({url: item.url, type: (item.url.startsWith('blob:') ? 'video' : 'photo')})} className="py-3.5 bg-white text-black rounded-2xl text-[9px] font-black uppercase hover:bg-slate-200 transition-all">GÖR</button>
+                                       <a href={item.url} download={`${item.name}.${item.url.includes('blob') ? 'mp4' : 'png'}`} onClick={e => e.stopPropagation()} className="py-3.5 bg-indigo-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-indigo-500 transition-all">
+                                         <DownloadIcon /> AL
+                                       </a>
+                                    </div>
+                                    {/* Referans ve çıkart butonları */}
+                                    {(() => {
+                                      const isVideo = item.url.startsWith('blob:') || item.url.includes('.mp4');
+                                      
+                                      if (isVideo) {
+                                        // Video için sadece albümden çıkart
+                                        return (
+                                          <button onClick={async (e) => {
+                                            e.stopPropagation();
+                                            try {
+                                              await supabaseService.unarchiveVideo(item.id);
+                                              
+                                              setState(prev => {
+                                                const videoItem = prev.archivedVideos.find(v => v.id === item.id);
+                                                if (!videoItem) return prev;
+                                                
+                                                return {
+                                                  ...prev,
+                                                  activeTab: 'video',
+                                                  archivedVideos: prev.archivedVideos.filter(v => v.id !== item.id),
+                                                  videoHistory: [videoItem, ...prev.videoHistory]
+                                                };
+                                              });
+                                            } catch (error) {
+                                              setState(prev => ({ ...prev, error: 'Albümden çıkarılamadı.' }));
+                                            }
+                                          }} className="w-full py-3.5 bg-amber-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-amber-500 transition-all">
+                                            <LayoutGridIcon /> ALBÜMDEN ÇIKART
+                                          </button>
+                                        );
+                                      } else {
+                                        // Görsel için referans ve çıkart butonları
+                                        return (
+                                          <>
+                                            {/* Fotoğraf referansı */}
+                                            <button onClick={(e) => {
+                                              e.stopPropagation();
+                                              setState(prev => ({
+                                                ...prev,
+                                                activeTab: 'photo',
+                                                styleReferenceImage: item.url
+                                              }));
+                                            }} className="w-full py-3.5 bg-indigo-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-indigo-500 transition-all">
+                                              <CameraIcon /> FOTOĞRAF REFERANSI
+                                            </button>
+                                            {/* Video referansı */}
+                                            <button onClick={(e) => {
+                                              e.stopPropagation();
+                                              setState(prev => ({
+                                                ...prev,
+                                                activeTab: 'video',
+                                                videoReferenceImage: item.url
+                                              }));
+                                            }} className="w-full py-3.5 bg-purple-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-purple-500 transition-all">
+                                              <VideoIcon /> VİDEO REFERANSI
+                                            </button>
+                                            {/* Albümden çıkart */}
+                                            <button onClick={async (e) => {
+                                              e.stopPropagation();
+                                              try {
+                                                await supabaseService.unarchiveImage(item.id);
+                                                
+                                                setState(prev => {
+                                                  const imageItem = prev.archivedImages.find(img => img.id === item.id);
+                                                  if (!imageItem) return prev;
+                                                  
+                                                  return {
+                                                    ...prev,
+                                                    activeTab: 'photo',
+                                                    archivedImages: prev.archivedImages.filter(img => img.id !== item.id),
+                                                    history: [imageItem, ...prev.history]
+                                                  };
+                                                });
+                                              } catch (error) {
+                                                setState(prev => ({ ...prev, error: 'Albümden çıkarılamadı.' }));
+                                              }
+                                            }} className="w-full py-3.5 bg-amber-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-amber-500 transition-all">
+                                              <LayoutGridIcon /> ALBÜMDEN ÇIKART
+                                            </button>
+                                          </>
+                                        );
+                                      }
+                                    })()}
+                                    <button onClick={async () => {
+                                      try {
+                                        if (item.url.startsWith('blob:') || item.url.includes('.mp4')) {
+                                          await supabaseService.deleteVideo(item.id);
+                                          setState(p => ({...p, archivedVideos: p.archivedVideos.filter(v => v.id !== item.id)}));
+                                        } else {
+                                          await supabaseService.deleteImage(item.id);
+                                          setState(p => ({...p, archivedImages: p.archivedImages.filter(img => img.id !== item.id)}));
+                                        }
+                                      } catch (error) {
+                                        setState(p => ({ ...p, error: 'Silme işlemi başarısız oldu.' }));
+                                      }
+                                    }} className="text-slate-600 hover:text-red-500 transition-all font-black text-[9px] uppercase mt-2">SİL</button>
+                                 </div>
+                               </div>
+                              );
+                            })}
+                         </div>
+                      </div>
+                    );
+                  })()}
+                  
+                  {/* Karakter klasörü içeriği */}
+                  {state.selectedFolderId && state.selectedFolderId !== 'quick' && (() => {
+                    const char = state.characters.find(c => c.id === state.selectedFolderId);
+                    if (!char) return null;
+                    
+                    const charImgs = state.archivedImages.filter(h => h.characterId === char.id);
+                    const charVids = state.archivedVideos.filter(vh => vh.characterId === char.id);
+                    
+                    return (
+                      <div className="space-y-6 animate-in fade-in duration-300">
+                         {/* DNA Görselleri Özeti */}
+                         <div className="space-y-2">
+                           <div className="text-xs font-black text-slate-400 uppercase tracking-wider px-2">DNA Görselleri</div>
+                           <div className="grid grid-cols-6 sm:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 px-1">
+                             {char.images.map((img, idx) => (
+                               <div key={idx} className="aspect-square rounded-xl overflow-hidden border border-white/10">
+                                 <img src={img} className="w-full h-full object-cover" />
+                               </div>
+                             ))}
+                           </div>
+                         </div>
+                         {/* Oluşturulan Görseller */}
+                         <div className="space-y-2">
+                           <div className="text-xs font-black text-slate-400 uppercase tracking-wider px-2">Oluşturulan Görseller</div>
+                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6 px-1">
+                            {[...charImgs, ...charVids].sort((a,b) => b.timestamp - a.timestamp).map((item: any) => {
+                              const isSelected = state.selectedItems.includes(item.id);
+                              return (
+                               <div 
+                                 key={item.id} 
+                                 onClick={(e) => {
+                                   if (state.isSelectionMode) {
+                                     e.stopPropagation();
+                                     setState(p => ({
+                                       ...p,
+                                       selectedItems: isSelected
+                                         ? p.selectedItems.filter(id => id !== item.id)
+                                         : [...p.selectedItems, item.id]
+                                     }));
+                                   }
+                                 }}
+                                 className={`aspect-[9/16] bg-slate-900 rounded-[2.5rem] overflow-hidden border-2 transition-all shadow-2xl relative cursor-pointer ${isSelected ? 'border-indigo-500 scale-105 ring-2 ring-indigo-500/50' : 'border-white/5 group hover:scale-[1.05]'}`}
+                               >
+                                 {/* Selection Checkbox */}
+                                 {state.isSelectionMode && (
+                                   <div className={`absolute top-4 left-4 z-20 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-indigo-600 border-indigo-400' : 'bg-black/50 border-white/30'}`}>
+                                     {isSelected && <span className="text-white text-xs">✓</span>}
+                                   </div>
+                                 )}
+                                 {item.url.startsWith('blob:') || item.url.includes('.mp4') ? <video src={item.url} autoPlay loop muted className="w-full h-full object-cover" /> : <img src={item.url} className="w-full h-full object-cover" />}
+                                 <div className={`absolute inset-0 bg-black/90 transition-all flex flex-col justify-end p-6 gap-3 backdrop-blur-sm ${state.isSelectionMode ? 'opacity-50' : 'opacity-0 group-hover:opacity-100'}`}>
                                     <div className="text-[10px] font-black text-white truncate mb-2 uppercase tracking-tighter border-b border-white/10 pb-2">{item.name}</div>
                                     <div className="grid grid-cols-2 gap-2 mt-2">
                                        <button onClick={() => setSelectedMedia({url: item.url, type: (item.url.startsWith('blob:') ? 'video' : 'photo')})} className="py-3.5 bg-white text-black rounded-2xl text-[9px] font-black uppercase hover:bg-slate-200 transition-all">GÖR</button>
@@ -1042,7 +1636,7 @@ const App: React.FC = () => {
                                                 };
                                               });
                                             } catch (error) {
-                                              console.error('Arşivden çıkarma hatası:', error);
+                                              // Arşivden çıkarma hatası
                                               setState(prev => ({ ...prev, error: 'Albümden çıkarılamadı.' }));
                                             }
                                           }} className="w-full py-3.5 bg-amber-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-amber-500 transition-all">
@@ -1096,7 +1690,7 @@ const App: React.FC = () => {
                                                   };
                                                 });
                                               } catch (error) {
-                                                console.error('Arşivden çıkarma hatası:', error);
+                                                // Arşivden çıkarma hatası
                                                 setState(prev => ({ ...prev, error: 'Albümden çıkarılamadı.' }));
                                               }
                                             }} className="w-full py-3.5 bg-amber-600 text-white rounded-2xl text-[9px] font-black uppercase flex items-center justify-center gap-2 hover:bg-amber-500 transition-all">
@@ -1114,26 +1708,213 @@ const App: React.FC = () => {
                                           await supabaseService.deleteImage(item.id);
                                         }
                                         setState(p => ({
-                                          ...p, 
-                                          archivedImages: p.archivedImages.filter(h => h.id !== item.id),
-                                          archivedVideos: p.archivedVideos.filter(v => v.id !== item.id)
+                                      ...p, 
+                                      archivedImages: p.archivedImages.filter(h => h.id !== item.id),
+                                      archivedVideos: p.archivedVideos.filter(v => v.id !== item.id)
                                         }));
                                       } catch (error) {
-                                        console.error('Arşiv silme hatası:', error);
+                                        // Arşiv silme hatası
                                         setState(p => ({ ...p, error: 'Dosya silinemedi.' }));
                                       }
                                     }} className="w-full py-2 text-red-500/60 text-[8px] font-black uppercase hover:text-red-500">DOSYAYI SİL</button>
                                  </div>
                               </div>
-                            ))}
+                              );
+                            })}
+                           </div>
                          </div>
                       </div>
                     );
-                  })}
+                  })()}
+               </div>
+             ) : (
+               state.activeTab === 'quick' ? (
+                    <div className="h-full flex flex-col relative">
+                      {/* Chat Messages Area */}
+                      <div className="flex-1 overflow-y-auto space-y-6 pt-8 pb-40 custom-scrollbar min-h-0">
+                        {state.quickHistory.length === 0 && !state.isProcessing && !state.quickReferenceImage && (
+                          <div className="h-full flex items-center justify-center min-h-[60vh]">
+                            <div className="text-center space-y-6 max-w-md mx-auto px-6">
+                              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 border-2 border-dashed border-white/10 flex items-center justify-center mx-auto text-white/20">
+                                <MagicIcon />
+                              </div>
+                              <div className="space-y-3">
+                                <div className="text-3xl font-black text-white/30 uppercase tracking-tighter">Görsel Yok</div>
+                                <div className="text-sm text-slate-500 leading-relaxed">Görsel oluşturmak için alttaki alana prompt yazın</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+
+                        {/* Chat Messages - Kullanıcı Prompt + AI Yanıtı */}
+                        {state.quickHistory.filter(img => img.url && img.url.trim() !== '').map((img) => (
+                          <div key={img.id} className="space-y-4 max-w-4xl mx-auto px-6">
+                            {/* Kullanıcı Mesajı (Prompt) */}
+                            <div className="flex gap-4 justify-end animate-in slide-in-from-bottom-4">
+                              <div className="flex-1 max-w-[80%]">
+                                <div className="bg-indigo-600/20 rounded-2xl p-4 border border-indigo-500/20 ml-auto">
+                                  <p className="text-sm text-white">{img.prompt}</p>
+                                </div>
+                              </div>
+                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
+                                <MagicIcon />
+                              </div>
+                            </div>
+
+                            {/* AI Yanıtı (Görsel) */}
+                            <div className="flex gap-4 animate-in slide-in-from-bottom-4">
+                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
+                                <MagicIcon />
+                              </div>
+                              <div className="flex-1 space-y-2">
+                                <div className="bg-slate-900/60 rounded-2xl p-4 border border-white/5">
+                                  <img 
+                                    src={img.url} 
+                                    className="w-full max-w-sm rounded-xl border border-white/10 cursor-zoom-in" 
+                                    onClick={() => setSelectedMedia({url: img.url, type: 'photo'})}
+                                  />
+                                </div>
+                                <div className="flex gap-2 text-xs flex-wrap">
+                                  <a href={img.url} download={`${img.name}.png`} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-slate-400 hover:text-white transition-all">İndir</a>
+                                  <button onClick={() => {
+                                    // Hızlı görseller veritabanında tutulmuyor - sadece state'ten kaldır
+                                    setState(p => ({...p, quickHistory: p.quickHistory.filter(h => h.id !== img.id), error: 'Görsel silindi ✓'}));
+                                    setTimeout(() => setState(p => ({...p, error: null})), 2000);
+                                  }} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 hover:text-red-300 transition-all">Sil</button>
+                                  <button onClick={async () => {
+                                    await archiveItem(img.id, 'photo');
+                                    // archiveItem içinde zaten feedback var, burada tekrar eklemiyoruz
+                                  }} className="px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg text-indigo-400 hover:text-indigo-300 transition-all">Albüme Gönder</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Loading Message - Kullanıcı Prompt Mesajı + AI Loading */}
+                        {state.isProcessing && state.processingType === 'photo' && state.quickHistory.length > 0 && state.quickHistory[0].url === '' && (
+                          <div className="space-y-4 max-w-4xl mx-auto px-6">
+                            {/* Kullanıcı Prompt Mesajı - quickHistory'deki geçici mesajı göster */}
+                            <div className="flex gap-4 justify-end animate-in slide-in-from-bottom-4">
+                              <div className="flex-1 max-w-[80%]">
+                                <div className="bg-indigo-600/20 rounded-2xl p-4 border border-indigo-500/20 ml-auto">
+                                  <p className="text-sm text-white">{state.quickHistory[0].prompt}</p>
+                                  {state.quickReferenceImage && (
+                                    <p className="text-xs text-indigo-400 mt-2">+ Referans görsel kullanılıyor</p>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
+                                <MagicIcon />
+                              </div>
+                            </div>
+
+                            {/* AI Loading Yanıtı */}
+                            <div className="flex gap-4 animate-in slide-in-from-bottom-4">
+                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
+                                <MagicIcon />
+                              </div>
+                              <div className="flex-1 space-y-2">
+                                <div className="bg-slate-900/60 rounded-2xl p-4 border border-white/5">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <span className="text-sm text-slate-400">Görsel oluşturuluyor...</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Chat Input - Fixed at Bottom */}
+                      <div className="absolute bottom-0 left-0 right-0 bg-[#020617] border-t border-white/10 pt-4 pb-6 z-10">
+                        <div className="max-w-4xl mx-auto px-6 bg-slate-900/60 rounded-2xl border border-white/10 p-4 space-y-3">
+                          {/* Input Row */}
+                          <div className="flex gap-3 items-center">
+                            <button
+                              onClick={() => quickInputRef.current?.click()}
+                              className="flex-shrink-0 w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all relative"
+                            >
+                              <UploadIcon />
+                              {state.quickReferenceImage && (
+                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#020617]"></div>
+                              )}
+                            </button>
+                            {state.quickReferenceImage && (
+                              <button 
+                                onClick={() => setState(p => ({...p, quickReferenceImage: null}))} 
+                                className="flex-shrink-0 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 hover:text-red-300 text-xs transition-all"
+                              >
+                                Referansı Kaldır
+                              </button>
+                            )}
+                            <input
+                              type="file"
+                              ref={quickInputRef}
+                              className="hidden"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file || !file.type.startsWith('image/')) {
+                                  e.target.value = '';
+                                  setState(p => ({...p, error: 'Geçersiz dosya formatı. Lütfen bir görsel seçin.'}));
+                                  setTimeout(() => setState(p => ({...p, error: null})), 3000);
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  const dataUrl = reader.result as string;
+                                  if (dataUrl) {
+                                    setState(p => ({...p, quickReferenceImage: dataUrl, error: 'Referans görsel eklendi ✓'}));
+                                    setTimeout(() => setState(p => ({...p, error: null})), 2000);
+                                  }
+                                  e.target.value = '';
+                                };
+                                reader.onerror = () => {
+                                  setState(p => ({...p, error: 'Görsel yüklenirken hata oluştu.'}));
+                                  setTimeout(() => setState(p => ({...p, error: null})), 3000);
+                                  e.target.value = '';
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                            />
+                            <input
+                              type="text"
+                              value={state.quickPrompt}
+                              onChange={(e) => setState(p => ({...p, quickPrompt: e.target.value}))}
+                              onKeyPress={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey && state.quickPrompt.trim()) {
+                                  e.preventDefault();
+                                  handleQuickGenerate();
+                                }
+                              }}
+                              placeholder="Görsel oluşturmak için prompt yazın"
+                              className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-all"
+                            />
+                            <button
+                              onClick={handleQuickGenerate}
+                              disabled={!state.quickPrompt.trim() || (state.isProcessing && state.processingType === 'photo')}
+                              className={`flex-shrink-0 px-6 py-3 rounded-xl font-black text-xs uppercase transition-all ${
+                                !state.quickPrompt.trim() || (state.isProcessing && state.processingType === 'photo')
+                                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:shadow-indigo-500/30'
+                              }`}
+                            >
+                              {state.isProcessing && state.processingType === 'photo' ? (
+                                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                              ) : (
+                                'OLUŞTUR'
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                </div>
              ) : (
                <div className="space-y-10">
-                  {/* Empty State */}
+                      {/* Empty State for Photo/Video */}
                   {((state.activeTab === 'photo' && state.history.filter(h => h.characterId === state.activeCharacterId).length === 0) || 
                     (state.activeTab === 'video' && state.videoHistory.filter(h => h.characterId === state.activeCharacterId).length === 0)) && !state.isProcessing && (
                     <div className="h-[60vh] flex items-center justify-center animate-in zoom-in duration-700">
@@ -1161,6 +1942,7 @@ const App: React.FC = () => {
                        </div>
                     )}
 
+
                     {state.activeTab === 'photo' && state.history.filter(h => h.characterId === state.activeCharacterId).map(img => (
                       <div key={img.id} className="group bg-slate-900 rounded-[3.5rem] overflow-hidden border border-white/5 relative shadow-2xl transition-all hover:scale-[1.02]">
                          <div className="aspect-[9/16] cursor-zoom-in" onClick={() => setSelectedMedia({url: img.url, type: 'photo'})}>
@@ -1185,7 +1967,7 @@ const App: React.FC = () => {
                                    await supabaseService.deleteImage(img.id);
                                    setState(p => ({...p, history: p.history.filter(h => h.id !== img.id)}));
                                  } catch (error) {
-                                   console.error('Görsel silme hatası:', error);
+                                   // Görsel silme hatası
                                    setState(p => ({ ...p, error: 'Görsel silinemedi.' }));
                                  }
                                }} className="w-full py-3 bg-red-600/90 hover:bg-red-600 text-white rounded-[1.5rem] text-[11px] font-black uppercase flex items-center justify-center gap-2 shadow-xl hover:shadow-red-600/20 transition-all mt-2">
@@ -1212,7 +1994,7 @@ const App: React.FC = () => {
                                    await supabaseService.deleteVideo(vid.id);
                                    setState(p => ({...p, videoHistory: p.videoHistory.filter(v => v.id !== vid.id)}));
                                  } catch (error) {
-                                   console.error('Video silme hatası:', error);
+                                   // Video silme hatası
                                    setState(p => ({ ...p, error: 'Video silinemedi.' }));
                                  }
                                }} className="text-slate-600 hover:text-red-500 transition-all font-black text-[10px] uppercase mt-4">SİL</button>
@@ -1222,6 +2004,7 @@ const App: React.FC = () => {
                     ))}
                   </div>
                </div>
+                  )
              )}
            </div>
         </section>

@@ -147,6 +147,97 @@ export const editImageWithGemini = async (
   }
 };
 
+// Hızlı görsel oluşturma - karakter DNA'sı olmadan
+export const generateQuickImage = async (
+  referenceImage: string | null,
+  prompt: string
+): Promise<{ url: string; name: string }> => {
+  // API key kontrolü
+  if (!process.env.API_KEY) {
+    throw new Error('API key bulunamadı! Lütfen .env.local dosyasında GEMINI_API_KEY ayarlandığından emin olun.');
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const parts: any[] = [];
+
+    // Referans görsel varsa ekle
+    if (referenceImage) {
+      parts.push({ text: "STYLE & COMPOSITION REFERENCE (Use this as inspiration):" });
+      parts.push({ inlineData: { data: referenceImage.split(',')[1], mimeType: 'image/png' } });
+    }
+
+    const fullPrompt = `
+      TASK: Generate a high-quality, professional photo based on the following description: "${prompt}"
+      
+      ${referenceImage ? 'You can use the reference image as inspiration for style, composition, or pose, but create a NEW unique image based on the prompt.' : ''}
+      
+      REQUIREMENTS:
+      - High-end professional photography quality
+      - Photorealistic, 8k resolution
+      - Professional studio/location photography
+      - Cinematic depth of field
+      - Perfect anatomy, no extra limbs
+      - Natural lighting and composition
+      - Creative and visually striking
+      
+      Create a unique, original image that matches the prompt description.
+    `;
+
+    parts.push({ text: fullPrompt });
+
+    console.log('Hızlı görsel üretimi başlatılıyor...', { 
+      hasReference: !!referenceImage,
+      prompt: prompt.substring(0, 50) + '...'
+    });
+
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: IMAGE_MODEL,
+      contents: [{ role: 'user', parts }]
+    });
+
+    if (!response.candidates || response.candidates.length === 0) {
+      throw new Error("API yanıt vermedi. Lütfen tekrar deneyin.");
+    }
+
+    const candidate = response.candidates[0];
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+      if (candidate.finishReason.includes('SAFETY') || candidate.finishReason.includes('IMAGE_SAFETY')) {
+        throw new Error('Görsel üretilemedi: IMAGE_SAFETY - İçerik güvenlik kontrolünden geçemedi. Lütfen farklı bir prompt deneyin.');
+      }
+      throw new Error(`Görsel üretilemedi: ${candidate.finishReason}`);
+    }
+
+    const part = candidate?.content?.parts?.find(p => p.inlineData);
+    if (!part?.inlineData) {
+      console.error('API yanıt detayları:', JSON.stringify(response, null, 2));
+      throw new Error("Görsel üretilemedi. API geçerli bir görsel döndürmedi.");
+    }
+    
+    const nameBase = prompt.split(' ').slice(0, 2).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Quick';
+    const generatedName = `QUICK_${nameBase}_${Date.now().toString().slice(-4)}`;
+
+    console.log('Hızlı görsel başarıyla üretildi:', generatedName);
+
+    return { 
+      url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
+      name: generatedName.toUpperCase()
+    };
+  } catch (error: any) {
+    console.error('Hızlı görsel üretimi hatası:', error);
+    
+    if (error.message) {
+      throw error;
+    } else if (error.response) {
+      throw new Error(`API Hatası: ${error.response.status} - ${error.response.statusText || 'Bilinmeyen hata'}`);
+    } else if (error.code) {
+      throw new Error(`API Hatası (${error.code}): ${error.message || 'Bilinmeyen hata'}`);
+    } else {
+      throw new Error(`Görsel üretimi başarısız: ${error.toString()}`);
+    }
+  }
+};
+
 export const generateVideoWithVeo = async (
   characterImages: string[],
   referenceImage: string | null,

@@ -24,6 +24,14 @@ export interface Character {
   createdAt: number;
 }
 
+export interface AlbumFolder {
+  id: string;
+  name: string;
+  createdAt: number;
+  imageIds: string[];
+  videoIds: string[];
+}
+
 export interface AppState {
   characters: Character[];
   activeCharacterId: string | null;
@@ -37,8 +45,13 @@ export interface AppState {
   archivedVideos: GeneratedVideo[];
   isProcessing: boolean;
   processingType: 'photo' | 'video' | null;
-  activeTab: 'photo' | 'video' | 'album';
+  activeTab: 'photo' | 'video' | 'album' | 'quick';
   activeSeason: 'summer' | 'autumn' | 'winter' | 'spring' | 'default';
+  
+  // Quick Generate
+  quickPrompt: string;
+  quickReferenceImage: string | null;
+  quickHistory: GeneratedImage[];
   
   // Camera Settings
   aspectRatio: string;
@@ -46,6 +59,12 @@ export interface AppState {
   shotScale: string | null;
   lensType: string | null;
   showCameraConfig: boolean;
+  
+  // Album Folders & Selection
+  albumFolders: AlbumFolder[];
+  selectedFolderId: string | null; // Currently opened folder ID (character ID or 'quick')
+  selectedItems: string[]; // Selected item IDs (images/videos)
+  isSelectionMode: boolean;
   
   error: string | null;
 }

@@ -114,11 +114,17 @@ export const supabaseService = {
     if (!supabase) return;
 
     try {
+      // Quick görseller için characterId yerine NULL kullan (veya özel UUID)
+      // Eğer characterId '00000000-0000-0000-0000-000000000000' ise NULL olarak kaydet
+      const characterId = (image.characterId === '00000000-0000-0000-0000-000000000000' || image.characterId === 'quick') 
+        ? null 
+        : image.characterId;
+
       const { error } = await supabase
         .from('generated_images')
         .insert({
           id: image.id,
-          character_id: image.characterId,
+          character_id: characterId,
           url: image.url,
           name: image.name,
           prompt: image.prompt,
@@ -158,7 +164,7 @@ export const supabaseService = {
         name: img.name,
         prompt: img.prompt,
         timestamp: img.timestamp,
-        characterId: img.character_id
+        characterId: img.character_id || '00000000-0000-0000-0000-000000000000' // NULL ise quick görsel olarak işaretle
       }));
     } catch (error) {
       console.error('Görseller getirilemedi:', error);
