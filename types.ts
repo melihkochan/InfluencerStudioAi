@@ -68,6 +68,11 @@ export interface AppState {
   selectedItems: string[]; // Selected item IDs (images/videos)
   isSelectionMode: boolean;
   
+  // Cost Tracking
+  totalCostUSD: number; // Toplam maliyet (USD)
+  totalImages: number; // Toplam oluşturulan görsel sayısı
+  totalVideos: number; // Toplam oluşturulan video sayısı
+  usdToTryRate: number; // USD/TRY kuru (güncel kur)
   
   error: string | null;
 }

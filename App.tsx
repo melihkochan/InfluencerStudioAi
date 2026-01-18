@@ -47,6 +47,10 @@ const App: React.FC = () => {
     selectedFolderId: null,
     selectedItems: [],
     isSelectionMode: false,
+    totalCostUSD: 0,
+    totalImages: 0,
+    totalVideos: 0,
+    usdToTryRate: 35, // Varsayılan kur (güncel kuru alınacak)
       error: null,
   });
 
@@ -65,6 +69,27 @@ const App: React.FC = () => {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
 
+  // Güncel dolar kurunu al
+  useEffect(() => {
+    const fetchExchangeRate = async () => {
+      try {
+        // exchangerate-api.com kullanarak güncel kur (ücretsiz, API key gerektirmez)
+        const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+        const data = await response.json();
+        if (data.rates && data.rates.TRY) {
+          setState(p => ({ ...p, usdToTryRate: data.rates.TRY }));
+        }
+      } catch (error) {
+        // Kur alınamazsa varsayılan 35 TL kullanılır
+        console.warn('Dolar kuru alınamadı, varsayılan kur kullanılıyor (35 TL)');
+      }
+    };
+    
+    fetchExchangeRate();
+    // Her 1 saatte bir kur güncelle (isteğe bağlı)
+    const interval = setInterval(fetchExchangeRate, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // İlk yüklemede Supabase'den verileri çek
   useEffect(() => {
@@ -88,6 +113,39 @@ const App: React.FC = () => {
         const regularImages = images.filter(img => img.characterId !== 'quick');
 
         // Supabase yükleme tamamlandı
+        
+        // Mevcut görseller ve videoları sayarak maliyeti hesapla
+        const existingImageCount = regularImages.length + archivedImages.length;
+        const existingVideoCount = videos.length + archivedVideos.length;
+        const existingCostUSD = (existingImageCount * 0.04) + (existingVideoCount * 0.60);
+
+        // localStorage'dan daha önce kaydedilmiş maliyet bilgilerini yükle
+        let savedCost = { totalCostUSD: 0, totalImages: 0, totalVideos: 0 };
+        try {
+          const savedCostData = localStorage.getItem('kochan_studio_cost');
+          if (savedCostData) {
+            savedCost = JSON.parse(savedCostData);
+          }
+        } catch (e) {
+          // localStorage okuma hatası
+        }
+
+        // Mevcut görseller/videolar ile localStorage'daki toplamı karşılaştır
+        // Eğer mevcut sayılar localStorage'dan fazlaysa, mevcut sayıları kullan
+        const finalImageCount = Math.max(existingImageCount, savedCost.totalImages || 0);
+        const finalVideoCount = Math.max(existingVideoCount, savedCost.totalVideos || 0);
+        const finalCostUSD = Math.max(existingCostUSD, savedCost.totalCostUSD || 0);
+
+        // Hesaplanan değerleri localStorage'a kaydet
+        try {
+          localStorage.setItem('kochan_studio_cost', JSON.stringify({
+            totalCostUSD: finalCostUSD,
+            totalImages: finalImageCount,
+            totalVideos: finalVideoCount
+          }));
+        } catch (e) {
+          // localStorage kaydetme hatası
+        }
 
         setState(prev => ({
           ...prev,
@@ -96,7 +154,10 @@ const App: React.FC = () => {
           quickHistory: [], // Hızlı görseller geçici - sayfa yenilendiğinde kaybolur
           archivedImages,
           videoHistory: videos,
-          archivedVideos
+          archivedVideos,
+          totalCostUSD: finalCostUSD,
+          totalImages: finalImageCount,
+          totalVideos: finalVideoCount
         }));
       } catch (error) {
         // Veri yükleme hatası
@@ -386,15 +447,31 @@ const App: React.FC = () => {
           }
         }
         
-        // Tüm görseller tamamlandı - işlemi bitir
-        setState(p => ({ 
-          ...p, 
-          isProcessing: p.processingType === 'photo' ? false : p.isProcessing,
-          processingType: p.processingType === 'photo' ? null : p.processingType,
-          photoPrompt: '',
-          styleReferenceImage: null,
-          error: generatedImages.length > 1 ? `${generatedImages.length} görsel oluşturuldu ✓` : 'Görsel oluşturuldu ✓'
-        }));
+        // Tüm görseller tamamlandı - maliyeti hesapla ve işlemi bitir
+        const imageCost = generatedImages.length * 0.04; // Her görsel $0.04
+        setState(p => {
+          const newState = {
+            ...p, 
+            isProcessing: p.processingType === 'photo' ? false : p.isProcessing,
+            processingType: p.processingType === 'photo' ? null : p.processingType,
+            photoPrompt: '',
+            styleReferenceImage: null,
+            totalCostUSD: p.totalCostUSD + imageCost,
+            totalImages: p.totalImages + generatedImages.length,
+            error: generatedImages.length > 1 ? `${generatedImages.length} görsel oluşturuldu ✓` : 'Görsel oluşturuldu ✓'
+          };
+          // localStorage'a kaydet
+          try {
+            localStorage.setItem('kochan_studio_cost', JSON.stringify({
+              totalCostUSD: newState.totalCostUSD,
+              totalImages: newState.totalImages,
+              totalVideos: newState.totalVideos
+            }));
+          } catch (e) {
+            // localStorage kaydetme hatası
+          }
+          return newState;
+        });
         setTimeout(() => setState(p => ({...p, error: null})), 2000);
       } else {
         const videoPrompt = state.videoPrompt || '';
@@ -423,16 +500,33 @@ const App: React.FC = () => {
         } catch (dbError) {
           // Supabase kaydetme hatası
         }
-        
-        setState(p => ({ 
-          ...p, 
-          videoHistory: [newVid, ...p.videoHistory], 
-          isProcessing: p.processingType === 'video' ? false : p.isProcessing,
-          processingType: p.processingType === 'video' ? null : p.processingType,
-          videoPrompt: '',
-          videoReferenceImage: null,
-          error: null 
-        }));
+
+        // Video maliyeti: $0.60
+        const videoCost = 0.60;
+        setState(p => {
+          const newState = {
+            ...p, 
+            videoHistory: [newVid, ...p.videoHistory], 
+            isProcessing: p.processingType === 'video' ? false : p.isProcessing,
+            processingType: p.processingType === 'video' ? null : p.processingType,
+            videoPrompt: '',
+            videoReferenceImage: null,
+            totalCostUSD: p.totalCostUSD + videoCost,
+            totalVideos: p.totalVideos + 1,
+            error: null 
+          };
+          // localStorage'a kaydet
+          try {
+            localStorage.setItem('kochan_studio_cost', JSON.stringify({
+              totalCostUSD: newState.totalCostUSD,
+              totalImages: newState.totalImages,
+              totalVideos: newState.totalVideos
+            }));
+          } catch (e) {
+            // localStorage kaydetme hatası
+          }
+          return newState;
+        });
       }
     } catch (err: any) {
       // Üretim hatası
@@ -558,16 +652,30 @@ const App: React.FC = () => {
       }
 
       // Tüm görseller oluşturuldu - geçici mesajı kaldır ve tüm görselleri ekle
+      const quickImageCost = generatedImages.length * 0.04; // Her görsel $0.04
       setState(p => {
         const filteredHistory = p.quickHistory.filter(h => h.id !== tempMessage.id);
-        return {
+        const newState = {
           ...p, 
           quickHistory: [...filteredHistory, ...generatedImages], // Tüm görselleri ekle
           quickReferenceImage: null, // Referans görseli temizle
           isProcessing: false,
           processingType: null,
+          totalCostUSD: p.totalCostUSD + quickImageCost,
+          totalImages: p.totalImages + generatedImages.length,
           error: `${imageCount} görsel oluşturuldu ✓` 
         };
+        // localStorage'a kaydet
+        try {
+          localStorage.setItem('kochan_studio_cost', JSON.stringify({
+            totalCostUSD: newState.totalCostUSD,
+            totalImages: newState.totalImages,
+            totalVideos: newState.totalVideos
+          }));
+        } catch (e) {
+          // localStorage kaydetme hatası
+        }
+        return newState;
       });
       setTimeout(() => setState(p => ({...p, error: null})), 2000);
     } catch (err: any) {
@@ -850,10 +958,31 @@ const App: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-6">
-           <div className="flex items-center gap-3 bg-slate-900/60 px-4 py-2 rounded-xl border border-white/5">
-             <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
-             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest tracking-[0.2em]">CONNECTED</span>
-           </div>
+          {/* Cost Display */}
+          <div className="flex items-center gap-4 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 px-4 py-2 rounded-xl border border-indigo-500/20">
+            <div className="flex flex-col items-end gap-0.5">
+              <div className="text-[10px] font-black text-indigo-400 uppercase tracking-wider">
+                ${state.totalCostUSD.toFixed(2)} USD
+              </div>
+              <div className="text-[9px] font-black text-slate-500 uppercase">
+                {(state.totalCostUSD * state.usdToTryRate).toFixed(2)} ₺
+              </div>
+            </div>
+            <div className="h-8 w-px bg-white/10"></div>
+            <div className="flex flex-col gap-0.5">
+              <div className="text-[9px] font-black text-slate-400 uppercase">
+                {state.totalImages} Görsel × $0.04
+              </div>
+              <div className="text-[9px] font-black text-slate-400 uppercase">
+                {state.totalVideos} Video × $0.60
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3 bg-slate-900/60 px-4 py-2 rounded-xl border border-white/5">
+            <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest tracking-[0.2em]">CONNECTED</span>
+          </div>
         </div>
       </header>
 
