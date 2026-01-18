@@ -119,12 +119,6 @@ export const editImageWithGemini = async (
 
     parts.push({ text: fullPrompt });
 
-    console.log('Gemini API çağrısı yapılıyor...', { 
-      model: IMAGE_MODEL, 
-      partsCount: parts.length,
-      aspectRatio: camera.aspectRatio 
-    });
-
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: IMAGE_MODEL,
       contents: { parts },
@@ -134,11 +128,6 @@ export const editImageWithGemini = async (
           imageSize: "1K" 
         } 
       }
-    });
-
-    console.log('API yanıtı alındı:', { 
-      hasCandidates: !!response.candidates?.[0],
-      candidatesCount: response.candidates?.length || 0
     });
 
     if (!response.candidates || response.candidates.length === 0) {
@@ -163,8 +152,6 @@ export const editImageWithGemini = async (
     const nameBase = masterPrompt.split(' ').slice(0, 2).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Shot';
     const generatedName = `${nameBase}_${Date.now().toString().slice(-4)}`;
 
-    console.log('Görsel başarıyla üretildi:', generatedName);
-
     return { 
       url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
       name: generatedName.toUpperCase()
@@ -185,10 +172,11 @@ export const editImageWithGemini = async (
   }
 };
 
-// Hızlı görsel oluşturma - karakter DNA'sı olmadan
+// Hızlı görsel oluşturma - karakter DNA'sı olmadan (chat geçmişi ile)
 export const generateQuickImage = async (
   referenceImage: string | null,
-  prompt: string
+  prompt: string,
+  previousPrompts: string[] = []
 ): Promise<{ url: string; name: string }> => {
   // API key kontrolü
   if (!process.env.API_KEY) {
@@ -199,6 +187,14 @@ export const generateQuickImage = async (
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const parts: any[] = [];
 
+    // Chat geçmişi varsa ekle (son 5 prompt - context için)
+    if (previousPrompts.length > 0) {
+      const recentPrompts = previousPrompts.slice(0, 5).reverse(); // En yeni olanlar başta
+      parts.push({ 
+        text: `CONVERSATION CONTEXT & HISTORY:\nThe user has previously requested these images in this conversation:\n${recentPrompts.map((p, i) => `${i + 1}. "${p}"`).join('\n')}\n\nIMPORTANT: Remember this context when generating the new image. Maintain consistency with the conversation theme and style unless the new prompt explicitly requests something different.\n\n` 
+      });
+    }
+
     // Referans görsel varsa ekle
     if (referenceImage) {
       parts.push({ text: "STYLE & COMPOSITION REFERENCE (Use this as inspiration):" });
@@ -207,6 +203,8 @@ export const generateQuickImage = async (
 
     const fullPrompt = `
       TASK: Generate a high-quality, professional photo based on the following description: "${prompt}"
+      
+      ${previousPrompts.length > 0 ? 'NOTE: This is part of an ongoing conversation. Consider the previous requests above when generating this image to maintain consistency and context.' : ''}
       
       ${referenceImage ? 'You can use the reference image as inspiration for style, composition, or pose, but create a NEW unique image based on the prompt.' : ''}
       
@@ -218,16 +216,12 @@ export const generateQuickImage = async (
       - Perfect anatomy, no extra limbs
       - Natural lighting and composition
       - Creative and visually striking
+      ${previousPrompts.length > 0 ? '- Maintain conversation context and style consistency with previous requests' : ''}
       
       Create a unique, original image that matches the prompt description.
     `;
 
     parts.push({ text: fullPrompt });
-
-    console.log('Hızlı görsel üretimi başlatılıyor...', { 
-      hasReference: !!referenceImage,
-      prompt: prompt.substring(0, 50) + '...'
-    });
 
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: IMAGE_MODEL,
@@ -254,8 +248,6 @@ export const generateQuickImage = async (
     
     const nameBase = prompt.split(' ').slice(0, 2).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Quick';
     const generatedName = `QUICK_${nameBase}_${Date.now().toString().slice(-4)}`;
-
-    console.log('Hızlı görsel başarıyla üretildi:', generatedName);
 
     return { 
       url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,

@@ -52,6 +52,7 @@ export interface AppState {
   quickPrompt: string;
   quickReferenceImage: string | null;
   quickHistory: GeneratedImage[];
+  quickImageCount: number; // Kaç görsel oluşturulacak (1-4)
   
   // Camera Settings
   aspectRatio: string;
@@ -59,6 +60,7 @@ export interface AppState {
   shotScale: string | null;
   lensType: string | null;
   showCameraConfig: boolean;
+  photoImageCount: number; // Photo tab için görsel sayısı (1-4)
   
   // Album Folders & Selection
   albumFolders: AlbumFolder[];

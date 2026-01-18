@@ -36,11 +36,13 @@ const App: React.FC = () => {
     quickPrompt: '',
     quickReferenceImage: null,
     quickHistory: [],
+    quickImageCount: 1,
       aspectRatio: '9:16',
       cameraAngle: null,
       shotScale: null,
       lensType: null,
       showCameraConfig: false,
+      photoImageCount: 1,
     albumFolders: [],
     selectedFolderId: null,
     selectedItems: [],
@@ -52,6 +54,7 @@ const App: React.FC = () => {
 
   const [isCreatingChar, setIsCreatingChar] = useState(false);
   const [newCharName, setNewCharName] = useState('');
+  const [showClearChatConfirm, setShowClearChatConfirm] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<{url: string, type: 'photo' | 'video'} | null>(null);
   const [uploadFeedback, setUploadFeedback] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
@@ -323,42 +326,76 @@ const App: React.FC = () => {
         };
 
         const photoPrompt = state.photoPrompt || '';
+        const imageCount = state.photoImageCount || 1; // Kaç görsel oluşturulacak
         
         // Görsel üretimi başlatılıyor
 
-        // Timeout ile birlikte API çağrısı
-        result = await Promise.race([
-          editImageWithGemini(activeChar.images, state.styleReferenceImage, photoPrompt, state.activeSeason, cameraSettings),
-          timeoutPromise
-        ]) as { url: string; name: string };
-
-        // Görsel üretildi
-
-        const newImg: GeneratedImage = { 
-          id: Date.now().toString(), 
-          url: result.url, 
-          name: `${activeChar.name.toUpperCase()}_${result.name}`,
-          prompt: state.photoPrompt, 
-          timestamp: Date.now(), 
-          characterId: activeChar.id 
-        };
+        const generatedImages: GeneratedImage[] = [];
         
-        // Supabase'e kaydet
-        try {
-          await supabaseService.saveImage(newImg, false);
-        } catch (dbError) {
-          // Supabase kaydetme hatası
+        // Seçilen sayı kadar görsel oluştur
+        for (let i = 0; i < imageCount; i++) {
+          // Timeout ile birlikte API çağrısı
+          result = await Promise.race([
+            editImageWithGemini(activeChar.images, state.styleReferenceImage, photoPrompt, state.activeSeason, cameraSettings),
+            timeoutPromise
+          ]) as { url: string; name: string };
+
+          // Görsel üretildi
+          const newImg: GeneratedImage = { 
+            id: `${Date.now()}-${i}`, 
+            url: result.url, 
+            name: `${activeChar.name.toUpperCase()}_${result.name}`,
+            prompt: state.photoPrompt, 
+            timestamp: Date.now() + i, 
+            characterId: activeChar.id 
+          };
+          
+          generatedImages.push(newImg);
+          
+          // Her görsel oluşturulduğunda progress göster
+          setState(p => ({
+            ...p,
+            error: `Görsel ${i + 1}/${imageCount} oluşturuldu...`
+          }));
+          
+          // Son görsel değilse kısa bir bekleme
+          if (i < imageCount - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
         
+        // Tüm görselleri Supabase'e kaydet
+        for (const newImg of generatedImages) {
+          try {
+            await supabaseService.saveImage(newImg, false);
+          } catch (dbError) {
+            // Supabase kaydetme hatası
+          }
+        }
+        
+        // Her görsel tamamlanınca hemen state'e ekle (progress için)
+        for (let i = 0; i < generatedImages.length; i++) {
+          const img = generatedImages[i];
+          setState(p => ({ 
+            ...p, 
+            history: [img, ...p.history]
+          }));
+          // Kısa bir bekleme - UI güncellensin
+          if (i < generatedImages.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        
+        // Tüm görseller tamamlandı - işlemi bitir
         setState(p => ({ 
           ...p, 
-          history: [newImg, ...p.history], 
           isProcessing: p.processingType === 'photo' ? false : p.isProcessing,
           processingType: p.processingType === 'photo' ? null : p.processingType,
           photoPrompt: '',
           styleReferenceImage: null,
-          error: null 
+          error: generatedImages.length > 1 ? `${generatedImages.length} görsel oluşturuldu ✓` : 'Görsel oluşturuldu ✓'
         }));
+        setTimeout(() => setState(p => ({...p, error: null})), 2000);
       } else {
         const videoPrompt = state.videoPrompt || '';
         
@@ -452,6 +489,13 @@ const App: React.FC = () => {
     const promptToUse = state.quickPrompt;
     const referenceImageToUse = state.quickReferenceImage;
     
+    // Önceki promptları al (chat geçmişi için - sadece gerçek görsellerin promptları)
+    // quickHistory eski->yeni sıralı, sondan 5'ini al
+    const previousPrompts = state.quickHistory
+      .filter(h => h.url && h.url.trim() !== '') // Sadece gerçek görseller (geçici mesajlar değil)
+      .map(h => h.prompt)
+      .slice(-5); // Son 5 prompt'u al (sondan)
+    
     // Geçici mesaj ekle (chat'te prompt gösterilecek)
     const tempMessage: GeneratedImage = {
       id: `temp-${Date.now()}`,
@@ -462,13 +506,15 @@ const App: React.FC = () => {
       characterId: 'quick'
     };
     
-    // Textarea'yı hemen temizle, geçici mesajı ekle
+    const imageCount = state.quickImageCount || 1; // Kaç görsel oluşturulacak
+    
+    // Textarea'yı hemen temizle, geçici mesajı ekle (sona ekle - chat gibi)
     setState(p => ({ 
       ...p, 
       isProcessing: true, 
       processingType: 'photo',
       quickPrompt: '', // Textarea'yı temizle
-      quickHistory: [tempMessage, ...p.quickHistory], // Geçici mesaj ekle
+      quickHistory: [...p.quickHistory, tempMessage], // Geçici mesajı sona ekle
       error: null 
     }));
 
@@ -479,31 +525,48 @@ const App: React.FC = () => {
     });
 
     try {
-      const result = await Promise.race([
-        generateQuickImage(referenceImageToUse, promptToUse),
-        timeoutPromise
-      ]) as { url: string; name: string };
+      const generatedImages: GeneratedImage[] = [];
+      
+      // Seçilen sayı kadar görsel oluştur
+      for (let i = 0; i < imageCount; i++) {
+        const result = await Promise.race([
+          generateQuickImage(referenceImageToUse, promptToUse, previousPrompts),
+          timeoutPromise
+        ]) as { url: string; name: string };
 
-      const newImg: GeneratedImage = { 
-        id: Date.now().toString(), 
-        url: result.url, 
-        name: result.name,
-        prompt: promptToUse, // Prompt'u görsele kaydet
-        timestamp: Date.now(), 
-        characterId: 'quick'
-      };
+        const newImg: GeneratedImage = { 
+          id: `${Date.now()}-${i}`, // Her görsel için benzersiz ID
+          url: result.url, 
+          name: result.name,
+          prompt: promptToUse, // Prompt'u görsele kaydet
+          timestamp: Date.now() + i, // Her görsel için farklı timestamp
+          characterId: 'quick'
+        };
+        
+        generatedImages.push(newImg);
+        
+        // Her görsel oluşturulduğunda progress göster (geçici mesajı tut, sadece progress göster)
+        setState(p => ({
+          ...p,
+          error: `Görsel ${i + 1}/${imageCount} oluşturuldu...`
+        }));
+        
+        // Son görsel değilse kısa bir bekleme (API rate limit için)
+        if (i < imageCount - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
 
-      // Geçici mesajı gerçek mesajla değiştir
+      // Tüm görseller oluşturuldu - geçici mesajı kaldır ve tüm görselleri ekle
       setState(p => {
-        // Geçici mesajı kaldır, gerçek mesajı ekle
         const filteredHistory = p.quickHistory.filter(h => h.id !== tempMessage.id);
         return {
           ...p, 
-          quickHistory: [newImg, ...filteredHistory], // Gerçek mesajı en başa ekle
+          quickHistory: [...filteredHistory, ...generatedImages], // Tüm görselleri ekle
           quickReferenceImage: null, // Referans görseli temizle
           isProcessing: false,
           processingType: null,
-          error: 'Görsel oluşturuldu ✓' 
+          error: `${imageCount} görsel oluşturuldu ✓` 
         };
       });
       setTimeout(() => setState(p => ({...p, error: null})), 2000);
@@ -517,12 +580,17 @@ const App: React.FC = () => {
         errorMessage = 'İçerik güvenlik kontrolünden geçemedi. Lütfen farklı bir prompt deneyin.';
       }
 
-      setState(p => ({ 
-        ...p, 
-        isProcessing: false,
-        processingType: null,
-        error: errorMessage 
-      }));
+      setState(p => { 
+        // Hata durumunda geçici mesajı da temizle
+        const filteredHistory = p.quickHistory.filter(h => h.id !== tempMessage.id);
+        return {
+          ...p,
+          quickHistory: filteredHistory,
+          isProcessing: false,
+          processingType: null,
+          error: errorMessage 
+        };
+      });
     }
   };
 
@@ -632,6 +700,51 @@ const App: React.FC = () => {
     <div className="h-screen bg-[#020617] text-slate-200 font-sans flex flex-col overflow-hidden">
       
       {/* Modals */}
+      {showClearChatConfirm && (
+        <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6" onClick={() => setShowClearChatConfirm(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/10 p-8 rounded-[3rem] max-w-md w-full space-y-6 shadow-2xl scale-in-center relative overflow-hidden">
+            {/* Background decoration */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/10 rounded-full blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl"></div>
+            
+            <div className="relative z-10">
+              <div className="flex items-center justify-center mb-4">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-xl shadow-red-500/30">
+                  <CloseIcon />
+                </div>
+              </div>
+              <h3 className="text-2xl font-black text-center text-white uppercase tracking-tighter mb-2">SOHBETİ TEMİZLE</h3>
+              <p className="text-sm text-slate-400 text-center mb-6">Sohbet geçmişini temizlemek istediğinize emin misiniz? Bu işlem geri alınamaz.</p>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowClearChatConfirm(false)}
+                  className="flex-1 px-6 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-white font-black uppercase text-xs transition-all"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={() => {
+                    setState(p => ({ 
+                      ...p, 
+                      quickHistory: [], 
+                      quickPrompt: '', 
+                      quickReferenceImage: null,
+                      error: 'Sohbet temizlendi ✓'
+                    }));
+                    setTimeout(() => setState(p => ({...p, error: null})), 2000);
+                    setShowClearChatConfirm(false);
+                  }}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 rounded-xl text-white font-black uppercase text-xs transition-all shadow-lg shadow-red-500/30"
+                >
+                  Temizle
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isCreatingChar && (
         <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6" onClick={() => setIsCreatingChar(false)}>
           <form onSubmit={async (e) => {
@@ -1244,6 +1357,30 @@ const App: React.FC = () => {
                   }} 
                 />
             </section>
+            )}
+
+            {/* Image Count Section - Only for Photo Tab */}
+            {state.activeTab === 'photo' && (
+              <section className="bg-slate-900/40 p-5 rounded-[2.5rem] border border-white/5 space-y-3 shadow-xl">
+                <h3 className="text-[12px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
+                  OLUŞTURMA SAYISI
+                </h3>
+                <div className="flex justify-center gap-2">
+                  {[1, 2, 3, 4].map((count) => (
+                    <button
+                      key={count}
+                      onClick={() => setState(p => ({...p, photoImageCount: count}))}
+                      className={`px-6 py-3 rounded-xl text-sm font-black uppercase transition-all min-w-[4rem] ${
+                        state.photoImageCount === count
+                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/50 scale-105'
+                          : 'bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 border border-white/10'
+                      }`}
+                    >
+                      {count}
+                    </button>
+                  ))}
+                </div>
+              </section>
             )}
 
             {/* Scene Prompt Section */}
@@ -2041,8 +2178,20 @@ const App: React.FC = () => {
              ) : (
                state.activeTab === 'quick' ? (
                     <div className="h-full flex flex-col relative">
+                      {/* Chat Header with Clear Button */}
+                      {state.quickHistory.length > 0 && (
+                        <div className="flex justify-end px-6 pt-4 pb-2">
+                          <button
+                            onClick={() => setShowClearChatConfirm(true)}
+                            className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 hover:text-red-300 text-xs font-black uppercase transition-all flex items-center gap-2"
+                          >
+                            <CloseIcon />
+                            Sohbeti Temizle
+                          </button>
+                        </div>
+                      )}
                       {/* Chat Messages Area */}
-                      <div className="flex-1 overflow-y-auto space-y-6 pt-8 pb-40 custom-scrollbar min-h-0">
+                      <div className="flex-1 overflow-y-auto space-y-6 pt-4 pb-40 custom-scrollbar min-h-0">
                         {state.quickHistory.length === 0 && !state.isProcessing && !state.quickReferenceImage && (
                           <div className="h-full flex items-center justify-center min-h-[60vh]">
                             <div className="text-center space-y-6 max-w-md mx-auto px-6">
@@ -2104,13 +2253,13 @@ const App: React.FC = () => {
                         ))}
 
                         {/* Loading Message - Kullanıcı Prompt Mesajı + AI Loading */}
-                        {state.isProcessing && state.processingType === 'photo' && state.quickHistory.length > 0 && state.quickHistory[0].url === '' && (
+                        {state.isProcessing && state.processingType === 'photo' && state.quickHistory.length > 0 && state.quickHistory[state.quickHistory.length - 1].url === '' && (
                           <div className="space-y-4 max-w-4xl mx-auto px-6">
-                            {/* Kullanıcı Prompt Mesajı - quickHistory'deki geçici mesajı göster */}
+                            {/* Kullanıcı Prompt Mesajı - quickHistory'deki geçici mesajı göster (son öğe) */}
                             <div className="flex gap-4 justify-end animate-in slide-in-from-bottom-4">
                               <div className="flex-1 max-w-[80%]">
                                 <div className="bg-indigo-600/20 rounded-2xl p-4 border border-indigo-500/20 ml-auto">
-                                  <p className="text-sm text-white">{state.quickHistory[0].prompt}</p>
+                                  <p className="text-sm text-white">{state.quickHistory[state.quickHistory.length - 1].prompt}</p>
                                   {state.quickReferenceImage && (
                                     <p className="text-xs text-indigo-400 mt-2">+ Referans görsel kullanılıyor</p>
                                   )}
@@ -2261,14 +2410,52 @@ const App: React.FC = () => {
                   )}
 
                     {state.isProcessing && state.processingType === state.activeTab && (
-                       <div className="aspect-[9/16] bg-slate-900/60 rounded-[3.5rem] border border-indigo-500/20 flex flex-col items-center justify-center animate-pulse relative overflow-hidden shadow-2xl">
-                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent animate-shimmer"></div>
-                          <div className="w-16 h-16 border-[5px] border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                          <div className="mt-8 text-center px-6">
-                            <span className="text-lg font-black text-indigo-400 uppercase tracking-[0.4em] block">RENDERING</span>
-                            <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-2 block animate-pulse">DNA İşleniyor...</span>
+                      <>
+                        {/* Photo tab için birden fazla görsel oluşturuluyorsa */}
+                        {state.activeTab === 'photo' && state.photoImageCount > 1 && state.isProcessing && state.processingType === 'photo' && (
+                          // Seçilen sayı kadar rendering placeholder göster
+                          Array.from({ length: state.photoImageCount }).map((_, index) => {
+                            // Aktif karakter için son oluşturulan görselleri say (sadece yeni olanlar - son 10 saniye içinde)
+                            const recentImgs = state.history.filter(img => 
+                              img.characterId === state.activeCharacterId &&
+                              img.timestamp > (Date.now() - 10000) // Son 10 saniye
+                            );
+                            
+                            // Eğer bu index'te görsel varsa placeholder gösterme (görsel zaten gösteriliyor)
+                            if (index < recentImgs.length) {
+                              return null; // Bu placeholder yerine gerçek görsel gösteriliyor
+                            }
+                            
+                            return (
+                              <div 
+                                key={`rendering-${index}`} 
+                                className="aspect-[9/16] bg-slate-900/60 rounded-[3.5rem] border border-indigo-500/20 flex flex-col items-center justify-center animate-pulse relative overflow-hidden shadow-2xl"
+                              >
+                                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent animate-shimmer"></div>
+                                <div className="w-16 h-16 border-[5px] border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                <div className="mt-8 text-center px-6">
+                                  <span className="text-lg font-black text-indigo-400 uppercase tracking-[0.4em] block">RENDERING</span>
+                                  <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-2 block animate-pulse">Görsel {index + 1}/{state.photoImageCount}</span>
+                                </div>
+                              </div>
+                            );
+                          }).filter(Boolean)
+                        )}
+                        {/* Tek görsel veya video için normal placeholder */}
+                        {state.isProcessing && state.processingType === state.activeTab && 
+                         !(state.activeTab === 'photo' && state.photoImageCount > 1) && (
+                          <div className="aspect-[9/16] bg-slate-900/60 rounded-[3.5rem] border border-indigo-500/20 flex flex-col items-center justify-center animate-pulse relative overflow-hidden shadow-2xl">
+                            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent animate-shimmer"></div>
+                            <div className="w-16 h-16 border-[5px] border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                            <div className="mt-8 text-center px-6">
+                              <span className="text-lg font-black text-indigo-400 uppercase tracking-[0.4em] block">RENDERING</span>
+                              <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-2 block animate-pulse">
+                                {state.activeTab === 'photo' ? 'DNA İşleniyor...' : 'Video oluşturuluyor...'}
+                              </span>
+                            </div>
                           </div>
-                       </div>
+                        )}
+                      </>
                     )}
 
 
