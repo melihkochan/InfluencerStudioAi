@@ -45,14 +45,8 @@ export interface AppState {
   archivedVideos: GeneratedVideo[];
   isProcessing: boolean;
   processingType: 'photo' | 'video' | null;
-  activeTab: 'photo' | 'video' | 'album' | 'quick';
+  activeTab: 'photo' | 'video' | 'album' | 'prompts';
   activeSeason: 'summer' | 'autumn' | 'winter' | 'spring' | 'default';
-  
-  // Quick Generate
-  quickPrompt: string;
-  quickReferenceImage: string | null;
-  quickHistory: GeneratedImage[];
-  quickImageCount: number; // Kaç görsel oluşturulacak (1-4)
   
   // Camera Settings
   aspectRatio: string;
@@ -64,7 +58,7 @@ export interface AppState {
   
   // Album Folders & Selection
   albumFolders: AlbumFolder[];
-  selectedFolderId: string | null; // Currently opened folder ID (character ID or 'quick')
+  selectedFolderId: string | null; // Currently opened folder ID (character ID)
   selectedItems: string[]; // Selected item IDs (images/videos)
   isSelectionMode: boolean;
   

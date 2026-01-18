@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { AppState, Character, GeneratedImage, GeneratedVideo } from './types';
-import { editImageWithGemini, generateVideoWithVeo, generateQuickImage } from './services/geminiService';
+import { editImageWithGemini, generateVideoWithVeo } from './services/geminiService';
 import { supabaseService } from './services/supabaseService';
 import { 
   UploadIcon, MagicIcon, DownloadIcon, DeleteIcon, 
@@ -15,6 +15,48 @@ const CAMERA_OPTIONS = {
   angles: ['GÖZ HIZASI', 'YER SEVİYESİ', 'SOLUCAN BAKIŞI', 'ALT AÇI', 'ÜST AÇI', 'KUŞ BAKIŞI', 'DRONE ÇEKİMİ'],
   scales: ['ÇOK YAKIN', 'YAKIN PLAN', 'GÖĞÜS PLAN', 'BEL PLAN', 'BOY PLAN', 'GENEL PLAN', 'UZAK MESAFE'],
   lenses: ['8MM FİSHEYE', '14MM ULTRA', '35MM CLASSİC', '50MM NATURAL', '85MM PORTRAİT', 'ANAMORFİK']
+};
+
+// Hazır promptlar - karakter özellikleri içermez (saç rengi, göz rengi vs yok)
+const PROMPT_TEMPLATES = {
+  luxury: [
+    "Lüks otel lobisi, mermer zemin, kristal avize, modern dekorasyon, şık kıyafetler",
+    "Yüksek katlı ofis binası, şehir manzarası, cam duvarlar, profesyonel ortam, iş kıyafeti",
+    "Özel yat, deniz manzarası, güneşli hava, lüks iç mekan, yaz kıyafetleri",
+    "Premium restoran, şık masa düzeni, mum ışığı, akşam atmosferi, zarif kıyafet",
+    "Lüks alışveriş merkezi, vitrinler, modern mimari, günlük kıyafet, doğal ışık",
+    "Özel jet içi, lüks koltuklar, pencere manzarası, rahat kıyafet, yolculuk atmosferi",
+    "Spa merkezi, rahatlatıcı ortam, doğal taşlar, huzurlu atmosfer, rahat kıyafet",
+    "Lüks villa bahçesi, havuz kenarı, tropikal bitkiler, güneşli öğle, yaz kıyafetleri"
+  ],
+  fashion: [
+    "Moda çekimi, stüdyo ortamı, profesyonel ışıklandırma, şık kıyafet, minimal dekor",
+    "Sokak moda, şehir arka plan, doğal ışık, günlük kıyafet, modern atmosfer",
+    "Editorial çekim, lüks lokasyon, yaratıcı kompozisyon, şık kıyafet, profesyonel görünüm",
+    "Moda haftası, catwalk arka planı, şık kıyafet, profesyonel atmosfer, kamera flaşları",
+    "Vintage moda, retro dekor, nostaljik atmosfer, klasik kıyafet, film görünümü",
+    "High fashion, avangart kompozisyon, yaratıcı dekor, şık kıyafet, sanatsal atmosfer"
+  ],
+  lifestyle: [
+    "Kahve dükkanı, rahat atmosfer, doğal ışık, günlük kıyafet, sıcak ortam",
+    "Ev içi, modern dekorasyon, rahat kıyafet, günlük aktivite, doğal ışık",
+    "Park, doğa, açık hava, rahat kıyafet, güneşli hava, sakin atmosfer",
+    "Gym, spor salonu, fitness ekipmanları, spor kıyafet, enerjik atmosfer",
+    "Plaj, kum, deniz, güneşli hava, yaz kıyafetleri, rahat atmosfer",
+    "Kütüphane, kitaplar, sakin ortam, rahat kıyafet, doğal ışık, huzurlu atmosfer"
+  ],
+  business: [
+    "Toplantı odası, modern ofis, profesyonel ortam, iş kıyafeti, ciddi atmosfer",
+    "Konferans salonu, sahne, profesyonel ortam, iş kıyafeti, önemli etkinlik",
+    "Çalışma masası, laptop, modern ofis, iş kıyafeti, odaklanmış atmosfer",
+    "Networking etkinliği, şık mekan, iş kıyafeti, profesyonel atmosfer, sosyal ortam"
+  ],
+  evening: [
+    "Gece kulübü, neon ışıklar, dans pisti, akşam kıyafeti, enerjik atmosfer",
+    "Rooftop bar, şehir ışıkları, akşam manzarası, şık kıyafet, romantik atmosfer",
+    "Gala etkinliği, lüks mekan, şık kıyafet, akşam atmosferi, zarif ortam",
+    "Konser, sahne, müzik atmosferi, akşam kıyafeti, enerjik ortam"
+  ]
 };
 
 const App: React.FC = () => {
@@ -33,10 +75,6 @@ const App: React.FC = () => {
       processingType: null,
       activeTab: 'photo',
       activeSeason: 'default',
-    quickPrompt: '',
-    quickReferenceImage: null,
-    quickHistory: [],
-    quickImageCount: 1,
       aspectRatio: '9:16',
       cameraAngle: null,
       shotScale: null,
@@ -65,7 +103,6 @@ const App: React.FC = () => {
   const charInputRef = useRef<HTMLInputElement>(null);
   const albumCharInputRef = useRef<HTMLInputElement>(null);
   const styleInputRef = useRef<HTMLInputElement>(null);
-  const quickInputRef = useRef<HTMLInputElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
 
@@ -110,54 +147,23 @@ const App: React.FC = () => {
 
         // Hızlı görseller veritabanına kaydedilmez - sadece geçici state'te tutulur
         // Quick görselleri filtrele (sadece normal görselleri al)
-        const regularImages = images.filter(img => img.characterId !== 'quick');
+        const regularImages = images;
 
         // Supabase yükleme tamamlandı
         
-        // Mevcut görseller ve videoları sayarak maliyeti hesapla
-        const existingImageCount = regularImages.length + archivedImages.length;
-        const existingVideoCount = videos.length + archivedVideos.length;
-        const existingCostUSD = (existingImageCount * 0.04) + (existingVideoCount * 0.60);
-
-        // localStorage'dan daha önce kaydedilmiş maliyet bilgilerini yükle
-        let savedCost = { totalCostUSD: 0, totalImages: 0, totalVideos: 0 };
-        try {
-          const savedCostData = localStorage.getItem('kochan_studio_cost');
-          if (savedCostData) {
-            savedCost = JSON.parse(savedCostData);
-          }
-        } catch (e) {
-          // localStorage okuma hatası
-        }
-
-        // Mevcut görseller/videolar ile localStorage'daki toplamı karşılaştır
-        // Eğer mevcut sayılar localStorage'dan fazlaysa, mevcut sayıları kullan
-        const finalImageCount = Math.max(existingImageCount, savedCost.totalImages || 0);
-        const finalVideoCount = Math.max(existingVideoCount, savedCost.totalVideos || 0);
-        const finalCostUSD = Math.max(existingCostUSD, savedCost.totalCostUSD || 0);
-
-        // Hesaplanan değerleri localStorage'a kaydet
-        try {
-          localStorage.setItem('kochan_studio_cost', JSON.stringify({
-            totalCostUSD: finalCostUSD,
-            totalImages: finalImageCount,
-            totalVideos: finalVideoCount
-          }));
-        } catch (e) {
-          // localStorage kaydetme hatası
-        }
+        // Supabase'den maliyet bilgilerini getir
+        const costData = await supabaseService.getTotalCost();
 
         setState(prev => ({
           ...prev,
           characters,
           history: regularImages,
-          quickHistory: [], // Hızlı görseller geçici - sayfa yenilendiğinde kaybolur
           archivedImages,
           videoHistory: videos,
           archivedVideos,
-          totalCostUSD: finalCostUSD,
-          totalImages: finalImageCount,
-          totalVideos: finalVideoCount
+          totalCostUSD: costData.totalCostUSD,
+          totalImages: costData.totalImages,
+          totalVideos: costData.totalVideos
         }));
       } catch (error) {
         // Veri yükleme hatası
@@ -283,12 +289,7 @@ const App: React.FC = () => {
   };
 
   // localStorage kaydetme artık gerekli değil - Supabase kullanıyoruz
-  // Sadece fallback için tutuluyor (Supabase bağlantısı yoksa)
-  useEffect(() => {
-    // localStorage kaydetme devre dışı - Supabase kullanılıyor
-    // Eğer gelecekte fallback gerekirse burayı tekrar aktif edebilirsiniz
-    return () => {};
-  }, [state]);
+  // Bu useEffect kaldırıldı - state değişimini dinlemeye gerek yok
 
 
   const activeChar = state.characters.find(c => c.id === state.activeCharacterId);
@@ -395,22 +396,22 @@ const App: React.FC = () => {
         
         // Seçilen sayı kadar görsel oluştur
         for (let i = 0; i < imageCount; i++) {
-          // Timeout ile birlikte API çağrısı
-          result = await Promise.race([
-            editImageWithGemini(activeChar.images, state.styleReferenceImage, photoPrompt, state.activeSeason, cameraSettings),
-            timeoutPromise
-          ]) as { url: string; name: string };
+        // Timeout ile birlikte API çağrısı
+        result = await Promise.race([
+          editImageWithGemini(activeChar.images, state.styleReferenceImage, photoPrompt, state.activeSeason, cameraSettings),
+          timeoutPromise
+        ]) as { url: string; name: string };
 
-          // Görsel üretildi
-          const newImg: GeneratedImage = { 
+        // Görsel üretildi
+        const newImg: GeneratedImage = { 
             id: `${Date.now()}-${i}`, 
-            url: result.url, 
-            name: `${activeChar.name.toUpperCase()}_${result.name}`,
-            prompt: state.photoPrompt, 
+          url: result.url, 
+          name: `${activeChar.name.toUpperCase()}_${result.name}`,
+          prompt: state.photoPrompt, 
             timestamp: Date.now() + i, 
-            characterId: activeChar.id 
-          };
-          
+          characterId: activeChar.id 
+        };
+        
           generatedImages.push(newImg);
           
           // Her görsel oluşturulduğunda progress göster
@@ -427,18 +428,18 @@ const App: React.FC = () => {
         
         // Tüm görselleri Supabase'e kaydet
         for (const newImg of generatedImages) {
-          try {
-            await supabaseService.saveImage(newImg, false);
-          } catch (dbError) {
-            // Supabase kaydetme hatası
+        try {
+          await supabaseService.saveImage(newImg, false);
+        } catch (dbError) {
+          // Supabase kaydetme hatası
           }
         }
         
         // Her görsel tamamlanınca hemen state'e ekle (progress için)
         for (let i = 0; i < generatedImages.length; i++) {
           const img = generatedImages[i];
-          setState(p => ({ 
-            ...p, 
+        setState(p => ({ 
+          ...p, 
             history: [img, ...p.history]
           }));
           // Kısa bir bekleme - UI güncellensin
@@ -447,31 +448,23 @@ const App: React.FC = () => {
           }
         }
         
-        // Tüm görseller tamamlandı - maliyeti hesapla ve işlemi bitir
-        const imageCost = generatedImages.length * 0.04; // Her görsel $0.04
-        setState(p => {
-          const newState = {
-            ...p, 
-            isProcessing: p.processingType === 'photo' ? false : p.isProcessing,
-            processingType: p.processingType === 'photo' ? null : p.processingType,
-            photoPrompt: '',
-            styleReferenceImage: null,
-            totalCostUSD: p.totalCostUSD + imageCost,
-            totalImages: p.totalImages + generatedImages.length,
-            error: generatedImages.length > 1 ? `${generatedImages.length} görsel oluşturuldu ✓` : 'Görsel oluşturuldu ✓'
-          };
-          // localStorage'a kaydet
-          try {
-            localStorage.setItem('kochan_studio_cost', JSON.stringify({
-              totalCostUSD: newState.totalCostUSD,
-              totalImages: newState.totalImages,
-              totalVideos: newState.totalVideos
-            }));
-          } catch (e) {
-            // localStorage kaydetme hatası
-          }
-          return newState;
-        });
+        // Tüm görseller tamamlandı - maliyeti Supabase'e kaydet
+        await supabaseService.logCost('image', generatedImages.length);
+        
+        // Supabase'den güncel maliyet bilgilerini getir
+        const costData = await supabaseService.getTotalCost();
+        
+        setState(p => ({
+          ...p, 
+          isProcessing: p.processingType === 'photo' ? false : p.isProcessing,
+          processingType: p.processingType === 'photo' ? null : p.processingType,
+          photoPrompt: '',
+          styleReferenceImage: null,
+          totalCostUSD: costData.totalCostUSD,
+          totalImages: costData.totalImages,
+          totalVideos: costData.totalVideos,
+          error: generatedImages.length > 1 ? `${generatedImages.length} görsel oluşturuldu ✓` : 'Görsel oluşturuldu ✓'
+        }));
         setTimeout(() => setState(p => ({...p, error: null})), 2000);
       } else {
         const videoPrompt = state.videoPrompt || '';
@@ -501,32 +494,24 @@ const App: React.FC = () => {
           // Supabase kaydetme hatası
         }
 
-        // Video maliyeti: $0.60
-        const videoCost = 0.60;
-        setState(p => {
-          const newState = {
-            ...p, 
-            videoHistory: [newVid, ...p.videoHistory], 
-            isProcessing: p.processingType === 'video' ? false : p.isProcessing,
-            processingType: p.processingType === 'video' ? null : p.processingType,
-            videoPrompt: '',
-            videoReferenceImage: null,
-            totalCostUSD: p.totalCostUSD + videoCost,
-            totalVideos: p.totalVideos + 1,
-            error: null 
-          };
-          // localStorage'a kaydet
-          try {
-            localStorage.setItem('kochan_studio_cost', JSON.stringify({
-              totalCostUSD: newState.totalCostUSD,
-              totalImages: newState.totalImages,
-              totalVideos: newState.totalVideos
-            }));
-          } catch (e) {
-            // localStorage kaydetme hatası
-          }
-          return newState;
-        });
+        // Video maliyetini Supabase'e kaydet
+        await supabaseService.logCost('video', 1);
+        
+        // Supabase'den güncel maliyet bilgilerini getir
+        const costData = await supabaseService.getTotalCost();
+        
+        setState(p => ({ 
+          ...p, 
+          videoHistory: [newVid, ...p.videoHistory], 
+          isProcessing: p.processingType === 'video' ? false : p.isProcessing,
+          processingType: p.processingType === 'video' ? null : p.processingType,
+          videoPrompt: '',
+          videoReferenceImage: null,
+          totalCostUSD: costData.totalCostUSD,
+          totalImages: costData.totalImages,
+          totalVideos: costData.totalVideos,
+          error: null 
+        }));
       }
     } catch (err: any) {
       // Üretim hatası
@@ -565,142 +550,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleQuickGenerate = async () => {
-    if (!state.quickPrompt.trim()) {
-      setState(p => ({ ...p, error: "Lütfen bir prompt girin." }));
-      return;
-    }
-
-    if (!process.env.API_KEY) {
-      setState(p => ({ 
-        ...p, 
-        error: "API key bulunamadı! Lütfen .env.local dosyasında GEMINI_API_KEY ayarlandığından emin olun." 
-      }));
-      return;
-    }
-
-    // Prompt'u sakla (chat'te gösterilecek)
-    const promptToUse = state.quickPrompt;
-    const referenceImageToUse = state.quickReferenceImage;
-    
-    // Önceki promptları al (chat geçmişi için - sadece gerçek görsellerin promptları)
-    // quickHistory eski->yeni sıralı, sondan 5'ini al
-    const previousPrompts = state.quickHistory
-      .filter(h => h.url && h.url.trim() !== '') // Sadece gerçek görseller (geçici mesajlar değil)
-      .map(h => h.prompt)
-      .slice(-5); // Son 5 prompt'u al (sondan)
-    
-    // Geçici mesaj ekle (chat'te prompt gösterilecek)
-    const tempMessage: GeneratedImage = {
-      id: `temp-${Date.now()}`,
-      url: '',
-      name: '',
-      prompt: promptToUse,
-      timestamp: Date.now(),
-      characterId: 'quick'
-    };
-    
-    const imageCount = state.quickImageCount || 1; // Kaç görsel oluşturulacak
-    
-    // Textarea'yı hemen temizle, geçici mesajı ekle (sona ekle - chat gibi)
-    setState(p => ({ 
-      ...p, 
-      isProcessing: true, 
-      processingType: 'photo',
-      quickPrompt: '', // Textarea'yı temizle
-      quickHistory: [...p.quickHistory, tempMessage], // Geçici mesajı sona ekle
-      error: null 
-    }));
-
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error('İstek zaman aşımına uğradı. Lütfen tekrar deneyin.'));
-      }, 120000);
-    });
-
-    try {
-      const generatedImages: GeneratedImage[] = [];
-      
-      // Seçilen sayı kadar görsel oluştur
-      for (let i = 0; i < imageCount; i++) {
-        const result = await Promise.race([
-          generateQuickImage(referenceImageToUse, promptToUse, previousPrompts),
-          timeoutPromise
-        ]) as { url: string; name: string };
-
-        const newImg: GeneratedImage = { 
-          id: `${Date.now()}-${i}`, // Her görsel için benzersiz ID
-          url: result.url, 
-          name: result.name,
-          prompt: promptToUse, // Prompt'u görsele kaydet
-          timestamp: Date.now() + i, // Her görsel için farklı timestamp
-          characterId: 'quick'
-        };
-        
-        generatedImages.push(newImg);
-        
-        // Her görsel oluşturulduğunda progress göster (geçici mesajı tut, sadece progress göster)
-        setState(p => ({
-          ...p,
-          error: `Görsel ${i + 1}/${imageCount} oluşturuldu...`
-        }));
-        
-        // Son görsel değilse kısa bir bekleme (API rate limit için)
-        if (i < imageCount - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-
-      // Tüm görseller oluşturuldu - geçici mesajı kaldır ve tüm görselleri ekle
-      const quickImageCost = generatedImages.length * 0.04; // Her görsel $0.04
-      setState(p => {
-        const filteredHistory = p.quickHistory.filter(h => h.id !== tempMessage.id);
-        const newState = {
-          ...p, 
-          quickHistory: [...filteredHistory, ...generatedImages], // Tüm görselleri ekle
-          quickReferenceImage: null, // Referans görseli temizle
-          isProcessing: false,
-          processingType: null,
-          totalCostUSD: p.totalCostUSD + quickImageCost,
-          totalImages: p.totalImages + generatedImages.length,
-          error: `${imageCount} görsel oluşturuldu ✓` 
-        };
-        // localStorage'a kaydet
-        try {
-          localStorage.setItem('kochan_studio_cost', JSON.stringify({
-            totalCostUSD: newState.totalCostUSD,
-            totalImages: newState.totalImages,
-            totalVideos: newState.totalVideos
-          }));
-        } catch (e) {
-          // localStorage kaydetme hatası
-        }
-        return newState;
-      });
-      setTimeout(() => setState(p => ({...p, error: null})), 2000);
-    } catch (err: any) {
-      let errorMessage = 'Bilinmeyen bir hata oluştu.';
-      if (err.message) {
-        errorMessage = err.message;
-      }
-
-      if (errorMessage.includes('IMAGE_SAFETY') || errorMessage.includes('SAFETY')) {
-        errorMessage = 'İçerik güvenlik kontrolünden geçemedi. Lütfen farklı bir prompt deneyin.';
-      }
-
-      setState(p => { 
-        // Hata durumunda geçici mesajı da temizle
-        const filteredHistory = p.quickHistory.filter(h => h.id !== tempMessage.id);
-        return {
-          ...p,
-          quickHistory: filteredHistory,
-          isProcessing: false,
-          processingType: null,
-          error: errorMessage 
-        };
-      });
-    }
-  };
 
   const archiveItem = async (id: string, type: 'photo' | 'video') => {
     try {
@@ -721,34 +570,6 @@ const App: React.FC = () => {
           ...prev,
           history: prev.history.filter(h => h.id !== id),
           archivedImages: [...prev.archivedImages, item]
-        };
-          }
-          // Sonra quick history'de ara
-          item = prev.quickHistory.find(h => h.id === id);
-          if (item) {
-            // Quick görsel - önce veritabanına kaydet (archived olarak)
-            const itemToArchive: GeneratedImage = {
-              ...item,
-              characterId: '00000000-0000-0000-0000-000000000000' // Quick görseller için özel UUID
-            };
-            
-            // Veritabanına kaydet (async işlem)
-            (async () => {
-              try {
-                await supabaseService.saveImage(itemToArchive, true);
-                setState(p => ({ ...p, error: 'Albüme gönderildi ✓' }));
-                setTimeout(() => setState(p => ({...p, error: null})), 2000);
-              } catch (err) {
-                // Hata durumunda kullanıcıya bildir
-                setState(p => ({ ...p, error: 'Albüme kaydedilemedi. Lütfen tekrar deneyin.' }));
-                setTimeout(() => setState(p => ({...p, error: null})), 3000);
-              }
-            })();
-            
-            return {
-              ...prev,
-              quickHistory: prev.quickHistory.filter(h => h.id !== id),
-              archivedImages: [...prev.archivedImages, itemToArchive]
             };
           }
           return prev;
@@ -835,9 +656,6 @@ const App: React.FC = () => {
                   onClick={() => {
                     setState(p => ({ 
                       ...p, 
-                      quickHistory: [], 
-                      quickPrompt: '', 
-                      quickReferenceImage: null,
                       error: 'Sohbet temizlendi ✓'
                     }));
                     setTimeout(() => setState(p => ({...p, error: null})), 2000);
@@ -932,27 +750,23 @@ const App: React.FC = () => {
         </div>
 
         <nav className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-white/5 gap-2">
-          {['photo', 'video', 'quick', 'album'].map(tab => (
+          {['photo', 'video', 'prompts', 'album'].map(tab => (
             <button 
               key={tab}
               onClick={() => {
-                const wasQuick = state.activeTab === 'quick';
-                const isQuick = tab === 'quick';
                 setState(prev => ({
                   ...prev, 
                   activeTab: tab as any, 
-                  error: null,
-                  // Quick'ten çıkarken chat geçmişini temizle
-                  ...(wasQuick && !isQuick ? { quickHistory: [], quickPrompt: '', quickReferenceImage: null } : {})
+                  error: null
                 }));
               }} 
               className={`px-6 py-2.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-2.5 ${state.activeTab === tab ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-600/30' : 'text-slate-500 hover:text-slate-300'}`}
             >
               {tab === 'photo' && <CameraIcon />}
               {tab === 'video' && <VideoIcon />}
-              {tab === 'quick' && <MagicIcon />}
+              {tab === 'prompts' && <MagicIcon />}
               {tab === 'album' && <LayoutGridIcon />}
-              {tab === 'quick' ? 'HIZLI' : tab.toUpperCase()}
+              {tab === 'prompts' ? 'PROMPT' : tab.toUpperCase()}
             </button>
           ))}
         </nav>
@@ -979,10 +793,10 @@ const App: React.FC = () => {
             </div>
           </div>
           
-          <div className="flex items-center gap-3 bg-slate-900/60 px-4 py-2 rounded-xl border border-white/5">
-            <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest tracking-[0.2em]">CONNECTED</span>
-          </div>
+           <div className="flex items-center gap-3 bg-slate-900/60 px-4 py-2 rounded-xl border border-white/5">
+             <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
+             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest tracking-[0.2em]">CONNECTED</span>
+           </div>
         </div>
       </header>
 
@@ -990,7 +804,7 @@ const App: React.FC = () => {
       <main className="flex-grow flex px-8 py-6 gap-8 overflow-hidden">
         
         {/* Sidebar */}
-        <aside className={`w-[340px] flex-shrink-0 overflow-y-auto pr-3 space-y-6 custom-scrollbar ${state.activeTab === 'album' || state.activeTab === 'quick' ? 'hidden' : ''}`}>
+        <aside className={`w-[340px] flex-shrink-0 overflow-y-auto pr-3 space-y-6 custom-scrollbar ${state.activeTab === 'album' || state.activeTab === 'prompts' ? 'hidden' : ''}`}>
           
           <section className="bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/5 space-y-5 shadow-2xl">
              <div className="flex justify-between items-center px-1">
@@ -1298,102 +1112,10 @@ const App: React.FC = () => {
             </>
           )}
 
-          {state.activeTab === 'quick' && (
-            <>
-              <section className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 p-6 rounded-[2.5rem] border border-indigo-500/20 space-y-4 shadow-xl">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-indigo-500/20 rounded-xl"><MagicIcon /></div>
-                  <div>
-                    <h3 className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">HIZLI OLUŞTUR</h3>
-                    <p className="text-[9px] text-slate-500 mt-0.5">Karakter olmadan hızlı görsel üret</p>
-                  </div>
-                </div>
-              </section>
-
-              <section className="bg-slate-900/40 p-5 rounded-[2.5rem] border border-white/5 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between px-1">
-                  <h3 className="text-[11px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                    <UploadIcon /> REFERANS GÖRSEL
-                  </h3>
-                  <span className="text-[8px] font-black text-slate-600 uppercase">OPSİYONEL</span>
-                </div>
-                {!state.quickReferenceImage ? (
-                  <button 
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (quickInputRef.current) {
-                        quickInputRef.current.click();
-                      }
-                    }} 
-                    className="w-full h-20 border-2 border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-700 hover:border-indigo-500/30 hover:bg-indigo-600/5 transition-all group"
-                  >
-                    <div className="group-hover:scale-110 transition-transform"><UploadIcon /></div>
-                    <span className="text-[9px] font-black mt-1 uppercase tracking-widest">GÖRSEL YÜKLE</span>
-                  </button>
-                ) : (
-                  <div className="relative h-24 rounded-2xl overflow-hidden border border-indigo-500/30 group shadow-lg">
-                    <img src={state.quickReferenceImage} className="w-full h-full object-cover" />
-                    <button onClick={() => {
-                      setState(p => ({...p, quickReferenceImage: null}));
-                    }} className="absolute inset-0 bg-red-600/90 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-black text-[10px] uppercase transition-all">SİL</button>
-                  </div>
-                )}
-                <input 
-                  type="file" 
-                  ref={quickInputRef} 
-                  className="hidden" 
-                  accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) {
-                      e.target.value = '';
-                      return;
-                    }
-
-                    if (!file.type.startsWith('image/')) {
-                      // Sadece görsel dosyaları yüklenebilir
-                      setState(p => ({ ...p, error: 'Sadece görsel dosyaları yüklenebilir' }));
-                      e.target.value = '';
-                      return;
-                    }
-
-                    const reader = new FileReader();
-                    
-                    reader.onloadend = () => {
-                      try {
-                        const dataUrl = reader.result as string;
-                        if (!dataUrl) {
-                          // Görsel okunamadı
-                          return;
-                        }
-
-                        setState(p => ({ ...p, quickReferenceImage: dataUrl, error: null }));
-                        // Hızlı oluşturma referans görseli yüklendi
-                      } catch (err) {
-                        // Görsel yükleme hatası
-                        setState(p => ({ ...p, error: 'Görsel yüklenirken bir hata oluştu' }));
-                      }
-                      e.target.value = '';
-                    };
-
-                    reader.onerror = () => {
-                      // FileReader hatası
-                      setState(p => ({ ...p, error: 'Görsel okunamadı' }));
-                      e.target.value = '';
-                    };
-
-                    reader.readAsDataURL(file);
-                  }} 
-                />
-              </section>
-            </>
-          )}
-
           {/* Re-designed Bottom Section */}
           <div className="space-y-6 pt-2">
             {/* Reference Image Section */}
-            {state.activeTab !== 'quick' && (
+            {(
             <section className="bg-slate-900/40 p-5 rounded-[2.5rem] border border-white/5 space-y-4 shadow-xl">
                <div className="flex items-center justify-between px-1">
                   <h3 className="text-[11px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
@@ -1509,7 +1231,7 @@ const App: React.FC = () => {
                     </button>
                   ))}
                 </div>
-              </section>
+            </section>
             )}
 
             {/* Scene Prompt Section */}
@@ -1521,30 +1243,26 @@ const App: React.FC = () => {
                </div>
                
                <textarea 
-                  value={state.activeTab === 'quick' ? state.quickPrompt : (state.activeTab === 'photo' ? state.photoPrompt : state.videoPrompt)} 
+                  value={state.activeTab === 'photo' ? state.photoPrompt : state.videoPrompt} 
                   onChange={(e) => {
-                    if (state.activeTab === 'quick') {
-                      setState(p => ({...p, quickPrompt: e.target.value}));
-                    } else if (state.activeTab === 'photo') {
+                    if (state.activeTab === 'photo') {
                       setState(p => ({...p, photoPrompt: e.target.value}));
                     } else {
                       setState(p => ({...p, videoPrompt: e.target.value}));
                     }
                   }} 
-                  placeholder={state.activeTab === 'quick'
-                    ? "Görseli tanımlayın (örn: modern ofis ortamı, güneşli plaj, şehir manzarası...)"
-                    : state.activeTab === 'photo' 
+                  placeholder={state.activeTab === 'photo' 
                     ? "Karakteri nereye koyalım? (örn: gece kulübü girişi, neon ışıklar, elinde içecek...)" 
                     : "Video için aksiyon tanımlayın (örn: dans ediyor, gülümsüyor, yürüyor...)"} 
                   className="w-full bg-slate-950/50 border border-white/5 rounded-2xl p-4 text-sm h-32 outline-none focus:border-indigo-500 focus:bg-slate-950 transition-all resize-none text-slate-200 placeholder:text-slate-700 shadow-inner custom-scrollbar" 
                />
 
                <button 
-                 onClick={state.activeTab === 'quick' ? handleQuickGenerate : handleGenerate} 
-                 disabled={state.isProcessing && (state.activeTab === 'quick' ? state.processingType === 'photo' : state.processingType === state.activeTab)} 
-                 className={`w-full py-5 rounded-[1.75rem] font-black text-[11px] tracking-[0.4em] uppercase transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-3 ${state.isProcessing && (state.activeTab === 'quick' ? state.processingType === 'photo' : state.processingType === state.activeTab) ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-indigo-500/40 hover:scale-[1.02]'}`}
+                 onClick={handleGenerate} 
+                 disabled={state.isProcessing && state.processingType === state.activeTab} 
+                 className={`w-full py-5 rounded-[1.75rem] font-black text-[11px] tracking-[0.4em] uppercase transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-3 ${state.isProcessing && state.processingType === state.activeTab ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-indigo-500/40 hover:scale-[1.02]'}`}
                >
-                  {state.isProcessing && (state.activeTab === 'quick' ? state.processingType === 'photo' : state.processingType === state.activeTab) ? (
+                  {state.isProcessing && state.processingType === state.activeTab ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
                       <span>İŞLENİYOR</span>
@@ -1566,7 +1284,7 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-end border-b border-white/5 pb-6">
                     <h2 className="text-4xl font-black text-white uppercase tracking-tighter">STUDIO ARCHIVES</h2>
                     <div className="flex items-center gap-4">
-                      {state.selectedFolderId && state.selectedFolderId !== 'quick' && (() => {
+                      {state.selectedFolderId && (() => {
                         const char = state.characters.find(c => c.id === state.selectedFolderId);
                         if (!char) return null;
                         const charImgs = state.archivedImages.filter(h => h.characterId === char.id);
@@ -1579,13 +1297,6 @@ const App: React.FC = () => {
                             <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{dnaCount} DNA GÖRSELLERİ</span>
                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">TOPLAM: {generatedCount + dnaCount}</span>
                           </div>
-                        );
-                      })()}
-                      {state.selectedFolderId === 'quick' && (() => {
-                        const quickImgs = state.archivedImages.filter(h => h.characterId === '00000000-0000-0000-0000-000000000000');
-                        const quickVids = state.archivedVideos.filter(vh => vh.characterId === '00000000-0000-0000-0000-000000000000');
-                        return (
-                          <span className="text-[12px] font-black text-indigo-400 uppercase tracking-widest">{quickImgs.length + quickVids.length} OLUŞTURULAN GÖRSELLER</span>
                         );
                       })()}
                       {!state.selectedFolderId && (
@@ -2305,203 +2016,7 @@ const App: React.FC = () => {
                   })()}
                </div>
              ) : (
-               state.activeTab === 'quick' ? (
-                    <div className="h-full flex flex-col relative">
-                      {/* Chat Header with Clear Button */}
-                      {state.quickHistory.length > 0 && (
-                        <div className="flex justify-end px-6 pt-4 pb-2">
-                          <button
-                            onClick={() => setShowClearChatConfirm(true)}
-                            className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 hover:text-red-300 text-xs font-black uppercase transition-all flex items-center gap-2"
-                          >
-                            <CloseIcon />
-                            Sohbeti Temizle
-                          </button>
-                        </div>
-                      )}
-                      {/* Chat Messages Area */}
-                      <div className="flex-1 overflow-y-auto space-y-6 pt-4 pb-40 custom-scrollbar min-h-0">
-                        {state.quickHistory.length === 0 && !state.isProcessing && !state.quickReferenceImage && (
-                          <div className="h-full flex items-center justify-center min-h-[60vh]">
-                            <div className="text-center space-y-6 max-w-md mx-auto px-6">
-                              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 border-2 border-dashed border-white/10 flex items-center justify-center mx-auto text-white/20">
-                                <MagicIcon />
-                              </div>
-                              <div className="space-y-3">
-                                <div className="text-3xl font-black text-white/30 uppercase tracking-tighter">Görsel Yok</div>
-                                <div className="text-sm text-slate-500 leading-relaxed">Görsel oluşturmak için alttaki alana prompt yazın</div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-
-                        {/* Chat Messages - Kullanıcı Prompt + AI Yanıtı */}
-                        {state.quickHistory.filter(img => img.url && img.url.trim() !== '').map((img) => (
-                          <div key={img.id} className="space-y-4 max-w-4xl mx-auto px-6">
-                            {/* Kullanıcı Mesajı (Prompt) */}
-                            <div className="flex gap-4 justify-end animate-in slide-in-from-bottom-4">
-                              <div className="flex-1 max-w-[80%]">
-                                <div className="bg-indigo-600/20 rounded-2xl p-4 border border-indigo-500/20 ml-auto">
-                                  <p className="text-sm text-white">{img.prompt}</p>
-                                </div>
-                              </div>
-                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
-                                <MagicIcon />
-                              </div>
-                            </div>
-
-                            {/* AI Yanıtı (Görsel) */}
-                            <div className="flex gap-4 animate-in slide-in-from-bottom-4">
-                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
-                                <MagicIcon />
-                              </div>
-                              <div className="flex-1 space-y-2">
-                                <div className="bg-slate-900/60 rounded-2xl p-4 border border-white/5">
-                                  <img 
-                                    src={img.url} 
-                                    className="w-full max-w-sm rounded-xl border border-white/10 cursor-zoom-in" 
-                                    onClick={() => setSelectedMedia({url: img.url, type: 'photo'})}
-                                  />
-                                </div>
-                                <div className="flex gap-2 text-xs flex-wrap">
-                                  <a href={img.url} download={`${img.name}.png`} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-slate-400 hover:text-white transition-all">İndir</a>
-                                  <button onClick={() => {
-                                    // Hızlı görseller veritabanında tutulmuyor - sadece state'ten kaldır
-                                    setState(p => ({...p, quickHistory: p.quickHistory.filter(h => h.id !== img.id), error: 'Görsel silindi ✓'}));
-                                    setTimeout(() => setState(p => ({...p, error: null})), 2000);
-                                  }} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 hover:text-red-300 transition-all">Sil</button>
-                                  <button onClick={async () => {
-                                    await archiveItem(img.id, 'photo');
-                                    // archiveItem içinde zaten feedback var, burada tekrar eklemiyoruz
-                                  }} className="px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg text-indigo-400 hover:text-indigo-300 transition-all">Albüme Gönder</button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Loading Message - Kullanıcı Prompt Mesajı + AI Loading */}
-                        {state.isProcessing && state.processingType === 'photo' && state.quickHistory.length > 0 && state.quickHistory[state.quickHistory.length - 1].url === '' && (
-                          <div className="space-y-4 max-w-4xl mx-auto px-6">
-                            {/* Kullanıcı Prompt Mesajı - quickHistory'deki geçici mesajı göster (son öğe) */}
-                            <div className="flex gap-4 justify-end animate-in slide-in-from-bottom-4">
-                              <div className="flex-1 max-w-[80%]">
-                                <div className="bg-indigo-600/20 rounded-2xl p-4 border border-indigo-500/20 ml-auto">
-                                  <p className="text-sm text-white">{state.quickHistory[state.quickHistory.length - 1].prompt}</p>
-                                  {state.quickReferenceImage && (
-                                    <p className="text-xs text-indigo-400 mt-2">+ Referans görsel kullanılıyor</p>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
-                                <MagicIcon />
-                              </div>
-                            </div>
-
-                            {/* AI Loading Yanıtı */}
-                            <div className="flex gap-4 animate-in slide-in-from-bottom-4">
-                              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg border-2 border-white/10">
-                                <MagicIcon />
-                              </div>
-                              <div className="flex-1 space-y-2">
-                                <div className="bg-slate-900/60 rounded-2xl p-4 border border-white/5">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                                    <span className="text-sm text-slate-400">Görsel oluşturuluyor...</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Chat Input - Fixed at Bottom */}
-                      <div className="absolute bottom-0 left-0 right-0 bg-[#020617] border-t border-white/10 pt-4 pb-6 z-10">
-                        <div className="max-w-4xl mx-auto px-6 bg-slate-900/60 rounded-2xl border border-white/10 p-4 space-y-3">
-                          {/* Input Row */}
-                          <div className="flex gap-3 items-center">
-                            <button
-                              onClick={() => quickInputRef.current?.click()}
-                              className="flex-shrink-0 w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all relative"
-                            >
-                              <UploadIcon />
-                              {state.quickReferenceImage && (
-                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#020617]"></div>
-                              )}
-                            </button>
-                            {state.quickReferenceImage && (
-                              <button 
-                                onClick={() => setState(p => ({...p, quickReferenceImage: null}))} 
-                                className="flex-shrink-0 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 hover:text-red-300 text-xs transition-all"
-                              >
-                                Referansı Kaldır
-                              </button>
-                            )}
-                            <input
-                              type="file"
-                              ref={quickInputRef}
-                              className="hidden"
-                              accept="image/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (!file || !file.type.startsWith('image/')) {
-                                  e.target.value = '';
-                                  setState(p => ({...p, error: 'Geçersiz dosya formatı. Lütfen bir görsel seçin.'}));
-                                  setTimeout(() => setState(p => ({...p, error: null})), 3000);
-                                  return;
-                                }
-                                const reader = new FileReader();
-                                reader.onloadend = () => {
-                                  const dataUrl = reader.result as string;
-                                  if (dataUrl) {
-                                    setState(p => ({...p, quickReferenceImage: dataUrl, error: 'Referans görsel eklendi ✓'}));
-                                    setTimeout(() => setState(p => ({...p, error: null})), 2000);
-                                  }
-                                  e.target.value = '';
-                                };
-                                reader.onerror = () => {
-                                  setState(p => ({...p, error: 'Görsel yüklenirken hata oluştu.'}));
-                                  setTimeout(() => setState(p => ({...p, error: null})), 3000);
-                                  e.target.value = '';
-                                };
-                                reader.readAsDataURL(file);
-                              }}
-                            />
-                            <input
-                              type="text"
-                              value={state.quickPrompt}
-                              onChange={(e) => setState(p => ({...p, quickPrompt: e.target.value}))}
-                              onKeyPress={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey && state.quickPrompt.trim()) {
-                                  e.preventDefault();
-                                  handleQuickGenerate();
-                                }
-                              }}
-                              placeholder="Görsel oluşturmak için prompt yazın"
-                              className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-all"
-                            />
-                            <button
-                              onClick={handleQuickGenerate}
-                              disabled={!state.quickPrompt.trim() || (state.isProcessing && state.processingType === 'photo')}
-                              className={`flex-shrink-0 px-6 py-3 rounded-xl font-black text-xs uppercase transition-all ${
-                                !state.quickPrompt.trim() || (state.isProcessing && state.processingType === 'photo')
-                                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:shadow-indigo-500/30'
-                              }`}
-                            >
-                              {state.isProcessing && state.processingType === 'photo' ? (
-                                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-                              ) : (
-                                'OLUŞTUR'
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-               </div>
-             ) : (
+             (
                <div className="space-y-10">
                   {/* Active Rendering Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
@@ -2573,16 +2088,16 @@ const App: React.FC = () => {
                         {/* Tek görsel veya video için normal placeholder */}
                         {state.isProcessing && state.processingType === state.activeTab && 
                          !(state.activeTab === 'photo' && state.photoImageCount > 1) && (
-                          <div className="aspect-[9/16] bg-slate-900/60 rounded-[3.5rem] border border-indigo-500/20 flex flex-col items-center justify-center animate-pulse relative overflow-hidden shadow-2xl">
-                            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent animate-shimmer"></div>
-                            <div className="w-16 h-16 border-[5px] border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                            <div className="mt-8 text-center px-6">
-                              <span className="text-lg font-black text-indigo-400 uppercase tracking-[0.4em] block">RENDERING</span>
+                       <div className="aspect-[9/16] bg-slate-900/60 rounded-[3.5rem] border border-indigo-500/20 flex flex-col items-center justify-center animate-pulse relative overflow-hidden shadow-2xl">
+                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent animate-shimmer"></div>
+                          <div className="w-16 h-16 border-[5px] border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                          <div className="mt-8 text-center px-6">
+                            <span className="text-lg font-black text-indigo-400 uppercase tracking-[0.4em] block">RENDERING</span>
                               <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-2 block animate-pulse">
                                 {state.activeTab === 'photo' ? 'DNA İşleniyor...' : 'Video oluşturuluyor...'}
                               </span>
-                            </div>
                           </div>
+                       </div>
                         )}
                       </>
                     )}
@@ -2650,6 +2165,67 @@ const App: React.FC = () => {
                   </div>
                </div>
                   )
+             )}
+
+             {/* PROMPT TAB */}
+             {state.activeTab === 'prompts' && (
+               <div className="space-y-8 animate-in fade-in duration-500">
+                 <div className="flex justify-between items-end border-b border-white/5 pb-6">
+                   <div>
+                     <h2 className="text-4xl font-black text-white uppercase tracking-tighter mb-2">PROMPT KÜTÜPHANESİ</h2>
+                     <p className="text-sm text-slate-400">Karakter özelliklerini içermeyen hazır promptlar - sadece ortam, kıyafet ve atmosfer</p>
+                   </div>
+                 </div>
+
+                 <div className="space-y-8">
+                   {Object.entries(PROMPT_TEMPLATES).map(([category, prompts]) => (
+                     <div key={category} className="space-y-4">
+                       <h3 className="text-xl font-black text-indigo-400 uppercase tracking-wider border-b border-indigo-500/20 pb-2">
+                         {category === 'luxury' ? 'LÜKS ORTAMLAR' :
+                          category === 'fashion' ? 'MODA & STİL' :
+                          category === 'lifestyle' ? 'YAŞAM TARZI' :
+                          category === 'business' ? 'İŞ & PROFESYONEL' :
+                          category === 'evening' ? 'AKŞAM & GECE' : category.toUpperCase()}
+                       </h3>
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         {prompts.map((prompt, index) => (
+                           <div
+                             key={index}
+                             className="group bg-slate-900/40 border border-white/10 rounded-2xl p-5 hover:border-indigo-500/50 hover:bg-slate-900/60 transition-all cursor-pointer"
+                             onClick={() => {
+                               // Prompt'u kopyala
+                               navigator.clipboard.writeText(prompt);
+                               setState(p => ({...p, error: 'Prompt kopyalandı ✓'}));
+                               setTimeout(() => setState(p => ({...p, error: null})), 2000);
+                             }}
+                           >
+                             <div className="flex items-start justify-between gap-3 mb-3">
+                               <p className="text-sm text-slate-300 leading-relaxed flex-1">{prompt}</p>
+                               <button className="flex-shrink-0 w-8 h-8 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 flex items-center justify-center transition-all opacity-0 group-hover:opacity-100">
+                                 <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                 </svg>
+                               </button>
+                             </div>
+                             <div className="flex items-center gap-2 text-[10px] text-slate-500 uppercase tracking-wider">
+                               <span className="px-2 py-1 bg-slate-800/50 rounded-lg">Kopyalamak için tıklayın</span>
+                             </div>
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+
+                 <div className="mt-12 p-6 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl">
+                   <h4 className="text-sm font-black text-indigo-400 uppercase tracking-wider mb-3">💡 İPUCU</h4>
+                   <p className="text-sm text-slate-300 leading-relaxed">
+                     Bu promptlar karakterin fiziksel özelliklerini (saç rengi, göz rengi, ten rengi vb.) içermez. 
+                     Sadece ortam, kıyafet, pozisyon ve atmosfer tanımlar. Karakterin DNA'sı korunur ve görsel oluşturulurken 
+                     karakterin orijinal özellikleri kullanılır.
+                   </p>
+                 </div>
+               </div>
              )}
            </div>
         </section>

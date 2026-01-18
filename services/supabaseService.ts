@@ -329,5 +329,91 @@ export const supabaseService = {
       console.error('Video silinemedi:', error);
       throw error;
     }
+  },
+
+  // Maliyet log kaydet (her görsel/video oluşturulduğunda)
+  async logCost(type: 'image' | 'video', count: number = 1): Promise<void> {
+    if (!supabase) return;
+
+    try {
+      const costPerItem = type === 'image' ? 0.04 : 0.60;
+      const totalCost = count * costPerItem;
+
+      const { error } = await supabase
+        .from('cost_logs')
+        .insert({
+          type,
+          count,
+          cost_per_item: costPerItem,
+          total_cost: totalCost,
+          created_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Maliyet log kaydedilemedi:', error);
+      // Hata olsa bile devam et, kritik değil
+    }
+  },
+
+  // Toplam maliyeti getir (tüm loglardan)
+  async getTotalCost(): Promise<{ totalCostUSD: number; totalImages: number; totalVideos: number }> {
+    if (!supabase) {
+      return { totalCostUSD: 0, totalImages: 0, totalVideos: 0 };
+    }
+
+    try {
+      // Önce cost_logs tablosunun var olup olmadığını kontrol et
+      const { data, error } = await supabase
+        .from('cost_logs')
+        .select('type, count, total_cost');
+
+      // Eğer tablo yoksa veya hata varsa, mevcut görseller/videoları say
+      if (error) {
+        // Tablo yoksa, mevcut görseller/videoları sayarak hesapla
+        const images = await this.getImages(undefined, false);
+        const archivedImages = await this.getImages(undefined, true);
+        const videos = await this.getVideos(undefined, false);
+        const archivedVideos = await this.getVideos(undefined, true);
+        
+        const totalImages = images.length + archivedImages.length;
+        const totalVideos = videos.length + archivedVideos.length;
+        const totalCostUSD = (totalImages * 0.04) + (totalVideos * 0.60);
+        
+        return { totalCostUSD, totalImages, totalVideos };
+      }
+
+      let totalCostUSD = 0;
+      let totalImages = 0;
+      let totalVideos = 0;
+
+      (data || []).forEach((log: any) => {
+        totalCostUSD += parseFloat(log.total_cost) || 0;
+        if (log.type === 'image') {
+          totalImages += parseInt(log.count) || 0;
+        } else if (log.type === 'video') {
+          totalVideos += parseInt(log.count) || 0;
+        }
+      });
+
+      return { totalCostUSD, totalImages, totalVideos };
+    } catch (error) {
+      console.error('Maliyet bilgileri getirilemedi:', error);
+      // Fallback: mevcut görseller/videoları say
+      try {
+        const images = await this.getImages(undefined, false);
+        const archivedImages = await this.getImages(undefined, true);
+        const videos = await this.getVideos(undefined, false);
+        const archivedVideos = await this.getVideos(undefined, true);
+        
+        const totalImages = images.length + archivedImages.length;
+        const totalVideos = videos.length + archivedVideos.length;
+        const totalCostUSD = (totalImages * 0.04) + (totalVideos * 0.60);
+        
+        return { totalCostUSD, totalImages, totalVideos };
+      } catch (e) {
+        return { totalCostUSD: 0, totalImages: 0, totalVideos: 0 };
+      }
+    }
   }
 };
